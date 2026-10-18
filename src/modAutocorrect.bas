@@ -470,7 +470,7 @@ Sub ClearOpenAIApiKey()
 
 End Sub
 
-Private Function JsonEscape(ByVal value As String) As String
+Public Function JsonEscape(ByVal value As String) As String
 
     Dim i As Long
     Dim character As String
@@ -508,7 +508,7 @@ Private Function JsonEscape(ByVal value As String) As String
 
 End Function
 
-Private Function JsonStringProperty(ByVal jsonText As String, _
+Public Function JsonStringProperty(ByVal jsonText As String, _
     ByVal propertyName As String, ByVal startAt As Long) As String
 
     Dim propertyToken As String

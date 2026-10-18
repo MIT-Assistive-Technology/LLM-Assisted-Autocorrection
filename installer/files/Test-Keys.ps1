@@ -1,11 +1,19 @@
 <#
 .SYNOPSIS
-  Makes one tiny call to OpenAI using the key in config.ini.
-  Exit code 0 = it works, 1 = it failed. Used by the installer and by developers.
+  Checks every API key found in config.ini by listing the provider's models (no model name
+  needed, no usage cost). Exit code 0 = at least one key present and all present keys work.
+  Used by the installer and by developers.
+.NOTES
+  To add a provider, add a row to $providers (and to ResolveProvider in modCorrectParagraph.bas).
 #>
 param([string]$ConfigPath = (Join-Path $env:APPDATA 'LLMAutocorrect\config.ini'))
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$providers = @(
+    @{ Name = 'Gemini'; Key = 'GEMINI_API_KEY'; Url = 'https://generativelanguage.googleapis.com/v1beta/openai/models' },
+    @{ Name = 'OpenAI'; Key = 'OPENAI_API_KEY'; Url = 'https://api.openai.com/v1/models' }
+)
 
 function Read-Ini($path) {
     $h = @{}
@@ -21,24 +29,30 @@ function Read-Ini($path) {
 }
 
 $cfg = Read-Ini $ConfigPath
-if (-not $cfg['OPENAI_API_KEY']) { Write-Host '  [FAIL] OpenAI key is missing'; exit 1 }
+$tested = 0
+$ok = $true
 
-try {
-    $body = '{"model":"gpt-4o-mini","max_tokens":5,"messages":[{"role":"user","content":"Reply OK"}]}'
-    Invoke-WebRequest -Uri 'https://api.openai.com/v1/chat/completions' -Method Post -Body $body `
-        -Headers @{ Authorization = "Bearer $($cfg['OPENAI_API_KEY'])" } `
-        -ContentType 'application/json' -UseBasicParsing -TimeoutSec 20 | Out-Null
-    Write-Host '  [ OK ] OpenAI (correction)'
-    exit 0
-} catch {
-    $code = ''
-    if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-    $hint = switch ($code) {
-        401 { 'the key was rejected - check it was copied completely' }
-        403 { 'this key is not allowed to do that - check its permissions' }
-        429 { 'rate limit or out of credit' }
-        default { $_.Exception.Message }
+foreach ($p in $providers) {
+    $key = $cfg[$p.Key]
+    if (-not $key) { continue }
+    $tested++
+    try {
+        Invoke-WebRequest -Uri $p.Url -Headers @{ Authorization = "Bearer $key" } -UseBasicParsing -TimeoutSec 20 | Out-Null
+        Write-Host "  [ OK ] $($p.Name) key"
+    } catch {
+        $code = ''
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        $hint = switch ($code) {
+            400 { 'the key was rejected - check it was copied completely' }
+            401 { 'the key was rejected - check it was copied completely' }
+            403 { 'this key is not allowed to do that - check its permissions' }
+            429 { 'rate limit or out of credit' }
+            default { $_.Exception.Message }
+        }
+        Write-Host "  [FAIL] $($p.Name) key (HTTP $code): $hint"
+        $ok = $false
     }
-    Write-Host "  [FAIL] OpenAI (HTTP $code): $hint"
-    exit 1
 }
+
+if ($tested -eq 0) { Write-Host '  [FAIL] No API key found in config.ini'; exit 1 }
+if ($ok) { exit 0 } else { exit 1 }

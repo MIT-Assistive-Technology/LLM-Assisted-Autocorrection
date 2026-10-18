@@ -5,7 +5,7 @@
 - Desktop Word for Windows.
 - In Word: **File > Options > Trust Center > Trust Center Settings > Macro Settings > tick "Trust access to the VBA project object model"**. Only the build machine needs this.
 - [GitHub CLI](https://cli.github.com/) installed and `gh auth login` done (releases only).
-- Put your OpenAI key in `%APPDATA%\LLMAutocorrect\config.ini` as `OPENAI_API_KEY=...`, then run `installer\files\Test-Keys.ps1`.
+- Put your key in `%APPDATA%\LLMAutocorrect\config.ini` as `GEMINI_API_KEY=...` (and/or `OPENAI_API_KEY=...`), then run `installer\files\Test-Keys.ps1`.
 
 ## Workflow
 
@@ -15,10 +15,14 @@
 
 Prefer to iterate in the VBA editor (Alt+F11)? Import the `.bas` files from `src/`, and export your changes back to `src/` before committing.
 
+## Changing the model or prompt
+
+Edit `MODEL_NAME` and `SYSTEM_PROMPT` at the top of `src/modCorrectParagraph.bas`. The provider and the `config.ini` key it uses are worked out from the model name in `ResolveProvider` (names starting `gemini`/`gemma` use Google, everything else uses OpenAI). If the new prompt expects a different input format, edit `BuildUserMessage` too. To add a provider, add a branch in `ResolveProvider` and a row in `installeriles\Test-Keys.ps1`.
+
 ## Shipping a release
 
 1. In a PR, bump `VERSION` (semantic versioning) and add a `CHANGELOG.md` entry.
-2. After merge, on any machine that meets the setup above: `git checkout main && git pull`, then `powershell -File scripts\Release.ps1`.
+2. After merge, on any machine that meets the setup above: `git checkout main && git pull`, then `powershell -ExecutionPolicy Bypass -File scripts\Release.ps1`.
 3. That builds the template, zips it, and creates the GitHub release. The user's device installs it at its next sign-in (or via the desktop shortcut).
 
 Anyone on the team can do step 2; there is no CI because the build needs Word.

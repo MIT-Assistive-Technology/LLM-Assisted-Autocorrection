@@ -22,6 +22,7 @@ function Import-Module-Source($vbProject, $path) {
 
 $word = $null; $doc = $null
 try {
+    Write-Host 'Starting Word (hidden)...'
     $word = New-Object -ComObject Word.Application
     $word.Visible = $false
     $word.DisplayAlerts = 0
@@ -33,17 +34,23 @@ try {
                'then rerun. (This is a one-time setting on the build machine only.)')
     }
 
-    Get-ChildItem (Join-Path $repo 'src') -Filter *.bas | ForEach-Object { Import-Module-Source $proj $_.FullName }
+    Get-ChildItem (Join-Path $repo 'src') -Filter *.bas | ForEach-Object {
+        Write-Host "Importing $($_.Name)..."
+        Import-Module-Source $proj $_.FullName
+    }
 
     # Bind Enter inside the template itself, so the binding travels with the .dotm and is
     # active whenever the template is loaded from Word's STARTUP folder.
+    Write-Host 'Binding Enter...'
     $word.CustomizationContext = $doc
     $wdKeyCategoryMacro = 2; $wdKeyReturn = 13
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modAutocorrect.EnterAndCorrectLastParagraph', $word.BuildKeyCode($wdKeyReturn))
+    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $word.BuildKeyCode($wdKeyReturn))
 
+    Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }
     $wdFormatXMLTemplateMacroEnabled = 15
-    $doc.SaveAs2($out, $wdFormatXMLTemplateMacroEnabled)
+    # Plain [string]/[int] on purpose: a PowerShell-wrapped path makes Word's SaveAs2 hang.
+    $doc.SaveAs2([string]$out, [int]$wdFormatXMLTemplateMacroEnabled)
     $doc.Close([ref]0)
     Write-Host "Built $out"
 }
