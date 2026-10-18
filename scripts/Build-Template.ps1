@@ -45,12 +45,12 @@ try {
 
     # Bind the trigger key inside the template itself, so the binding travels with the .dotm and is
     # active whenever the template is loaded from Word's STARTUP folder.
-    # Trigger: the ` (backtick) key, no modifier. Enter is left alone. To use Enter instead, set
-    # $triggerKey = 13; for Shift + ` (tilde) set $triggerModifier = 256.
+    # Trigger: Enter. To use another key instead, change $triggerKey / $triggerModifier (for example
+    # 192 = the ` key, with 256 = Shift for tilde). Note that Shift + ` did not dispatch in testing.
     $wdKeyCategoryMacro = 2
-    $triggerKey = 192        # wdKeyBackSingleQuote, the ` ~ key
+    $triggerKey = 13         # wdKeyReturn (192 = wdKeyBackSingleQuote, the ` ~ key)
     $triggerModifier = 0     # 0 = none, 256 = wdKeyShift
-    Write-Host 'Binding trigger key...'
+    Write-Host 'Binding Enter...'
     $word.CustomizationContext = $doc
     # BuildKeyCode(modifier, key): modifiers come first, the key last; later arguments are by reference.
     if ($triggerModifier) { $keyArg = [int]$triggerKey; $code = $word.BuildKeyCode([int]$triggerModifier, [ref]$keyArg) }

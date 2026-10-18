@@ -1,6 +1,6 @@
 # LLM-Assisted-Autocorrection
 
-A Microsoft Word macro for Windows. When you press **`` ` ``** (backtick) at the end of a paragraph, instead of Enter, the paragraph you just finished is sent to an LLM (default: Google `gemini-3-flash-preview`; the model is a single constant, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)), the corrected text is written back in place, and then the new line is inserted.
+A Microsoft Word macro for Windows. When you press **Enter**, the paragraph you just finished is sent to an LLM (default: Google `gemini-3-flash-preview`; the model is a single constant, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)), the corrected text is written back in place, and then the new line is inserted.
 
 ## Install (end users)
 

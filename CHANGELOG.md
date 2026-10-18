@@ -1,7 +1,6 @@
 # Changelog
 
 ## Unreleased
-- Trigger key is now backtick (`` ` ``) instead of Enter; Enter is unchanged.
 - Fix: the key binding could point at a different loaded copy of the template (for example the installed one) and do nothing. The build now names its own VBA project (`AutocorrectMacros`) and binds the macro with that name.
 
 ## 0.1.1

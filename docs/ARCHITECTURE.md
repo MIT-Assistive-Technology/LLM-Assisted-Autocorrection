@@ -1,8 +1,8 @@
 # Architecture
 
-## Behavior (`src/modCorrectParagraph.bas`, bound to the backtick key)
+## Behavior (`src/modCorrectParagraph.bas`, bound to Enter)
 
-`EnterAndCorrectParagraph` runs when the backtick key (`` ` ``, left of the 1 key on a US layout) is pressed. The key is swallowed (no character is typed) and Enter is left as normal Word behavior, so it means "correct this and start a new line". The key is bound in `scripts/Build-Template.ps1` (`$triggerKey` / `$triggerModifier`; the comments there say how to use Enter or Shift + backtick instead). With a plain caret it:
+`EnterAndCorrectParagraph` runs on every Enter. The key is bound in `scripts/Build-Template.ps1` (`$triggerKey` / `$triggerModifier`; the comments there say how to use another key; Shift + backtick did not dispatch in testing). With a plain caret it:
 
 1. takes the paragraph the caret is in (minus its mark) and skips it if shorter than 2 characters,
 2. sends the whole paragraph, wrapped in `<text></text>`, to the configured model and gets the corrected paragraph back (a stray `<text>` wrapper in the reply is stripped),
@@ -10,7 +10,7 @@
 4. trims the start and end the two texts share and rewrites only the span in between through a `Range`, so formatting elsewhere in the paragraph is kept (if the paragraph contains fields or shapes, it falls back to replacing the whole paragraph),
 5. moves the caret to the end of the paragraph and inserts the new paragraph.
 
-With a selection, the key just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
+With a selection, Enter just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
 
 ### Switching models
 
