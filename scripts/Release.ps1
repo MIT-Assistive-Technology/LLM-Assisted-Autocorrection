@@ -22,8 +22,7 @@ if (-not $NoPublish) {
     if (git tag --list $tag) { throw "Tag $tag already exists. Bump VERSION." }
 }
 
-& (Join-Path $PSScriptRoot 'Build-Template.ps1')
-if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+& (Join-Path $PSScriptRoot 'Build-Template.ps1')   # throws on failure, which stops this script too
 
 $stage = Join-Path $repo 'dist\stage'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
