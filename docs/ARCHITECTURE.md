@@ -1,8 +1,8 @@
 # Architecture
 
-## Behavior (`src/modCorrectParagraph.bas`, bound to Enter)
+## Behavior (`src/modCorrectParagraph.bas`, bound to the backtick key)
 
-`EnterAndCorrectParagraph` runs on every Enter. With a plain caret it:
+`EnterAndCorrectParagraph` runs when the backtick key (`` ` ``, left of the 1 key on a US layout) is pressed. The key is swallowed (no character is typed) and Enter is left as normal Word behavior, so it means "correct this and start a new line". The key is bound in `scripts/Build-Template.ps1` (`$triggerKey` / `$triggerModifier`; the comments there say how to use Enter or Shift + backtick instead). With a plain caret it:
 
 1. takes the paragraph the caret is in (minus its mark) and skips it if shorter than 2 characters,
 2. sends the whole paragraph, wrapped in `<text></text>`, to the configured model and gets the corrected paragraph back (a stray `<text>` wrapper in the reply is stripped),
@@ -10,7 +10,7 @@
 4. trims the start and end the two texts share and rewrites only the span in between through a `Range`, so formatting elsewhere in the paragraph is kept (if the paragraph contains fields or shapes, it falls back to replacing the whole paragraph),
 5. moves the caret to the end of the paragraph and inserts the new paragraph.
 
-With a selection, Enter just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
+With a selection, the key just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
 
 ### Switching models
 
@@ -22,7 +22,7 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 
 ## Distribution
 
-- `src/*.bas` is the source of truth. `scripts/Build-Template.ps1` imports it into a fresh document through Word COM, binds Enter to the macro, and saves `dist\LLMAutocorrect.dotm`.
+- `src/*.bas` is the source of truth. `scripts/Build-Template.ps1` imports it into a fresh document through Word COM, names the VBA project `AutocorrectMacros`, binds the trigger key to that project's macro, and saves `dist\LLMAutocorrect.dotm`. The project is named explicitly, and the macro qualified with it, because Word resolves a bare macro name against every loaded project, including an installed copy of this template, which would make the binding point at the wrong project.
 - The template lives in Word's STARTUP folder, so it loads with every Word session. The key binding is stored inside the template.
 - `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer writes the API key(s) there; the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
 - A scheduled task runs `Update.ps1` 30 s after each sign-in. It compares `VERSION` with the latest GitHub release, and if newer (and Word is closed) swaps in the new template. The repo is public, so no authentication is needed.

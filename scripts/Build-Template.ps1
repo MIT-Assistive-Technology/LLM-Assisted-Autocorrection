@@ -34,17 +34,32 @@ try {
                'then rerun. (This is a one-time setting on the build machine only.)')
     }
 
+    # Every document's VBA project is called "Project" by default, which clashes with the open document's
+    # own project. Use a unique name that also differs from the file name (LLMAutocorrect.dotm).
+    $proj.Name = 'AutocorrectMacros'
+
     Get-ChildItem (Join-Path $repo 'src') -Filter *.bas | ForEach-Object {
         Write-Host "Importing $($_.Name)..."
         Import-Module-Source $proj $_.FullName
     }
 
-    # Bind Enter inside the template itself, so the binding travels with the .dotm and is
+    # Bind the trigger key inside the template itself, so the binding travels with the .dotm and is
     # active whenever the template is loaded from Word's STARTUP folder.
-    Write-Host 'Binding Enter...'
+    # Trigger: the ` (backtick) key, no modifier. Enter is left alone. To use Enter instead, set
+    # $triggerKey = 13; for Shift + ` (tilde) set $triggerModifier = 256.
+    $wdKeyCategoryMacro = 2
+    $triggerKey = 192        # wdKeyBackSingleQuote, the ` ~ key
+    $triggerModifier = 0     # 0 = none, 256 = wdKeyShift
+    Write-Host 'Binding trigger key...'
     $word.CustomizationContext = $doc
-    $wdKeyCategoryMacro = 2; $wdKeyReturn = 13
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $word.BuildKeyCode($wdKeyReturn))
+    # BuildKeyCode(modifier, key): modifiers come first, the key last; later arguments are by reference.
+    if ($triggerModifier) { $keyArg = [int]$triggerKey; $code = $word.BuildKeyCode([int]$triggerModifier, [ref]$keyArg) }
+    else { $code = $word.BuildKeyCode([int]$triggerKey) }
+    # Name this document's own VBA project explicitly. A bare "module.macro" is matched against every
+    # loaded project, including an already-installed copy of this template in STARTUP, and the binding
+    # would then point at that copy's project instead of this one.
+    $macro = '{0}.modCorrectParagraph.EnterAndCorrectParagraph' -f $proj.Name
+    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, [string]$macro, $code)
 
     Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }

@@ -1,8 +1,10 @@
 LLM Autocorrect for Word
 ========================
 
-What it does: when you press Enter in Word, the paragraph you just finished is
-checked for spelling, grammar, and punctuation, and fixed in place.
+What it does: when you press the ` (backtick) key in Word, the paragraph you just
+finished is checked for spelling, grammar, and punctuation, and fixed in place,
+and a new line is started. Use ` in place of Enter. (Enter itself works as normal.)
+` is the key to the left of the 1 key. It will not type a ` character.
 
 Install (about 2 minutes)
 -------------------------
@@ -11,7 +13,7 @@ Install (about 2 minutes)
 3. Double-click  Install.cmd
 4. Paste your Gemini API key when asked (typing is hidden). Press Enter to
    skip the OpenAI key unless you were given one.
-5. Wait for "Done!". Open Word and try it.
+5. Wait for "Done!". Open Word, type a line, and press ` instead of Enter.
 
 If Windows shows a blue "protected your PC" box, click "More info", then "Run anyway".
 
