@@ -34,6 +34,17 @@ try {
                'then rerun. (This is a one-time setting on the build machine only.)')
     }
 
+    # This machine may already have an installed copy of the template, which Word loads from STARTUP into
+    # this hidden session too. It contains the same macros, and Word would resolve the key binding below
+    # to that copy's project instead of the one being built, leaving the new file with an empty macro
+    # table (vbaData.xml) and a key that does nothing. Unload it for this session only.
+    foreach ($addin in @($word.AddIns)) {
+        if ($addin.Name -eq 'LLMAutocorrect.dotm' -and $addin.Installed) {
+            try { $addin.Installed = $false; Write-Host 'Unloaded the installed copy for this build.' }
+            catch { Write-Warning "Could not unload the installed copy ($($_.Exception.Message)). Close Word and uninstall it, then rebuild." }
+        }
+    }
+
     # Every document's VBA project is called "Project" by default, which clashes with the open document's
     # own project. Use a unique name that also differs from the file name (LLMAutocorrect.dotm).
     $proj.Name = 'AutocorrectMacros'
@@ -55,11 +66,10 @@ try {
     # BuildKeyCode(modifier, key): modifiers come first, the key last; later arguments are by reference.
     if ($triggerModifier) { $keyArg = [int]$triggerKey; $code = $word.BuildKeyCode([int]$triggerModifier, [ref]$keyArg) }
     else { $code = $word.BuildKeyCode([int]$triggerKey) }
-    # Name this document's own VBA project explicitly. A bare "module.macro" is matched against every
-    # loaded project, including an already-installed copy of this template in STARTUP, and the binding
-    # would then point at that copy's project instead of this one.
-    $macro = '{0}.modCorrectParagraph.EnterAndCorrectParagraph' -f $proj.Name
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, [string]$macro, $code)
+    # Use the bare "module.macro" name: Word resolves it to the real macro and records it in the file's
+    # macro table. A project-qualified name is stored in the key map but never resolved, so the table
+    # stays empty and the key does nothing.
+    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $code)
 
     Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }
@@ -67,6 +77,23 @@ try {
     # Plain [string]/[int] on purpose: a PowerShell-wrapped path makes Word's SaveAs2 hang.
     $doc.SaveAs2([string]$out, [int]$wdFormatXMLTemplateMacroEnabled)
     $doc.Close([ref]0)
+
+    # Check the saved file: the key map must point at a macro that is also in the macro table.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($out)
+    try {
+        function Read-Part($name) { $e = $zip.GetEntry($name); if (-not $e) { return '' }; $r = New-Object IO.StreamReader($e.Open()); try { $r.ReadToEnd() } finally { $r.Close() } }
+        $keymap = Read-Part 'word/customizations.xml'
+        $table  = Read-Part 'word/vbaData.xml'
+    } finally { $zip.Dispose() }
+    $bound = [regex]::Match($keymap, 'wne:macroName="([^"]+)"')
+    if (-not $bound.Success) { Remove-Item $out -Force; throw 'Build check failed: the file has no key binding.' }
+    if ($table -notmatch ('wne:macroName="' + [regex]::Escape($bound.Groups[1].Value) + '"')) {
+        Remove-Item $out -Force
+        throw ("Build check failed: the key is bound to $($bound.Groups[1].Value) but the file's macro table does not list it, " +
+               'so the key would do nothing. Close Word, uninstall any installed copy, and rebuild.')
+    }
+    Write-Host "Build check passed: key bound to $($bound.Groups[1].Value)"
     Write-Host "Built $out"
 }
 finally {
