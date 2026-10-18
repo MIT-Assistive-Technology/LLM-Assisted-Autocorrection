@@ -13,10 +13,9 @@ Option Explicit
 Private Const USE_DUMMY As Boolean = False   ' set to False to use the real API
 Private Const API_URL As String = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 Private Const MODEL_NAME As String = "gemini-3.8-flash"
-Private Const API_KEY_ENV_VAR As String = "LLM_API_KEY"
-Private Const ENV_FILE_PATH As String = ""   ' full path to your .env file
 Private Const MAX_CHARS As Long = 3000        ' skip very long paragraphs
 Private Const SPEAK_CHANGES As Boolean = True ' announce what was corrected
+Private mGeminiApiKey As String
 
 ' NVDA controller DLL (optional). Copy nvdaControllerClient64.dll next to
 ' WINWORD.EXE or into a folder on PATH. If missing, SAPI voice is used instead.
@@ -150,10 +149,9 @@ End Sub
 Private Function CallLLM(ByVal userText As String) As String
     Dim http As Object, body As String, apiKey As String
 
-    apiKey = ReadEnvValue(ENV_FILE_PATH, API_KEY_ENV_VAR)       ' 1st choice: .env file
-    If Len(apiKey) = 0 Then apiKey = Environ$(API_KEY_ENV_VAR)  ' fallback: Windows env var
+    apiKey = GetGeminiApiKey()
     If Len(apiKey) = 0 Then Err.Raise vbObjectError + 1, , _
-        API_KEY_ENV_VAR & " not found in .env file or environment variables."
+        "No Gemini API key was entered."
 
     body = "{""model"":""" & MODEL_NAME & """,""temperature"":0,""messages"":[" & _
            "{""role"":""system"",""content"":""" & JsonEscape(SystemPrompt()) & """}," & _
@@ -171,36 +169,21 @@ Private Function CallLLM(ByVal userText As String) As String
     CallLLM = Trim$(Replace(ExtractContent(http.responseText), vbLf, " "))
 End Function
 
-' Reads KEY=value from a .env file (ignores comments, blank lines, quotes, "export ")
-Private Function ReadEnvValue(ByVal filePath As String, ByVal keyName As String) As String
-    Dim f As Integer, ln As String, p As Long, k As String, v As String
-
-    If Len(Dir$(filePath)) = 0 Then Exit Function
-    f = FreeFile
-    Open filePath For Input As #f
-    Do While Not EOF(f)
-        Line Input #f, ln
-        ln = Replace(ln, Chr$(239) & Chr$(187) & Chr$(191), "")   ' strip UTF-8 BOM
-        ln = Trim$(ln)
-        If Len(ln) > 0 And Left$(ln, 1) <> "#" Then
-            If LCase$(Left$(ln, 7)) = "export " Then ln = Trim$(Mid$(ln, 8))
-            p = InStr(ln, "=")
-            If p > 1 Then
-                k = Trim$(Left$(ln, p - 1))
-                If k = keyName Then
-                    v = Trim$(Mid$(ln, p + 1))
-                    If Len(v) >= 2 Then
-                        If (Left$(v, 1) = """" And Right$(v, 1) = """") Or _
-                           (Left$(v, 1) = "'" And Right$(v, 1) = "'") Then v = Mid$(v, 2, Len(v) - 2)
-                    End If
-                    ReadEnvValue = v
-                    Exit Do
-                End If
-            End If
-        End If
-    Loop
-    Close #f
+' Prompts once and caches the key in memory until Word closes.
+Private Function GetGeminiApiKey() As String
+    If Len(mGeminiApiKey) = 0 Then
+        mGeminiApiKey = InputBox( _
+            "Enter your Gemini API key. It will be kept in memory only " & _
+            "until Word closes.", "Gemini API key")
+    End If
+    GetGeminiApiKey = mGeminiApiKey
 End Function
+
+Public Sub ClearGeminiApiKey()
+    mGeminiApiKey = vbNullString
+    MsgBox "The Gemini API key has been cleared from this Word session.", _
+        vbInformation, "LLM Autocorrect"
+End Sub
 
 Private Function JsonEscape(ByVal s As String) As String
     Dim i As Long, c As String, code As Long, out As String
