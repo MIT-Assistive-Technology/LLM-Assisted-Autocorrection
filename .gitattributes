@@ -1,0 +1,8 @@
+* text=auto
+*.bas text eol=crlf
+*.cls text eol=crlf
+*.frm text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.dotm binary
+*.zip binary

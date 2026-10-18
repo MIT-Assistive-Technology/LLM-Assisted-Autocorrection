@@ -1,3 +1,4 @@
+Attribute VB_Name = "modAutocorrect"
 Option Explicit
 
 Private Const OPENAI_API_URL As String = _
@@ -441,6 +442,15 @@ Private Function IsWordCharacter(ByVal character As String) As Boolean
 End Function
 
 Private Function GetOpenAIApiKey() As String
+
+    ' Installed copies keep the key in config.ini (see modConfig), read on every call so a
+    ' changed key applies immediately. If the file has none, fall back to asking.
+    Dim configKey As String
+    configKey = ConfigValue("OPENAI_API_KEY")
+    If Len(configKey) > 0 Then
+        GetOpenAIApiKey = configKey
+        Exit Function
+    End If
 
     If Len(mOpenAIApiKey) = 0 Then
         mOpenAIApiKey = InputBox( _
