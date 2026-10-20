@@ -5,7 +5,7 @@
 - Desktop Word for Windows.
 - In Word: **File > Options > Trust Center > Trust Center Settings > Macro Settings > tick "Trust access to the VBA project object model"**. Only the build machine needs this.
 - [GitHub CLI](https://cli.github.com/) installed and `gh auth login` done (releases only).
-- Put your key in `%APPDATA%\LLMAutocorrect\config.ini` as `GEMINI_API_KEY=...` (and/or `OPENAI_API_KEY=...`), then run `installer\files\Test-Keys.ps1`.
+- Put your key in `%APPDATA%\LLMAutocorrect\config.ini` as `GEMINI_API_KEY=...` (add `OPENAI_API_KEY=...` too if you switch to an OpenAI model), then run `installer\files\Test-Keys.ps1`.
 
 ## Workflow
 

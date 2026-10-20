@@ -34,17 +34,14 @@ if (Test-Path $config) {
     $keep = ($a -eq '' -or $a -match '^[Yy]')
 }
 if (-not $keep) {
-    Write-Host 'Paste each key and press Enter (typing is hidden).'
-    Write-Host 'The Gemini key is required: it is the model this version uses. The OpenAI key is optional.'
-    $gemini = Read-Plain 'Gemini API key (required)'
+    $gemini = Read-Plain 'Please enter your Gemini API key (required)'
     if (-not $gemini) {
         Write-Host 'A Gemini API key is required, so nothing was installed. Run Install again.' -ForegroundColor Red
         exit 1
     }
-    $openai = Read-Plain 'OpenAI API key (optional - press Enter to skip)'
-    $lines = @('; LLM Autocorrect settings. Changes apply immediately - no need to restart Word.')
-    if ($gemini) { $lines += "GEMINI_API_KEY=$gemini" }
-    if ($openai) { $lines += "OPENAI_API_KEY=$openai" }
+    # An OpenAI key is only needed if MODEL_NAME is switched to an OpenAI model; add OPENAI_API_KEY=... to config.ini by hand.
+    $lines = @('; LLM Autocorrect settings. Changes apply immediately - no need to restart Word.',
+               "GEMINI_API_KEY=$gemini")
     # ASCII on purpose: a UTF-8 BOM would corrupt the first line for VBA.
     [IO.File]::WriteAllLines($config, $lines, [Text.Encoding]::ASCII)
 }
