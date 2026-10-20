@@ -9,8 +9,8 @@ Install (about 2 minutes)
 1. Right-click this zip, choose "Extract All", and open the new folder.
 2. Close Word.
 3. Double-click  Install.cmd
-4. Paste your Gemini API key when asked (typing is hidden). Press Enter to
-   skip the OpenAI key unless you were given one.
+4. Paste your Gemini API key when asked (typing is hidden). It is required.
+   Press Enter to skip the OpenAI key question unless you were given one.
 5. Wait for "Done!". Open Word, type a line, and press Enter at the end of a line.
 
 If Windows shows a blue "protected your PC" box, click "More info", then "Run anyway".

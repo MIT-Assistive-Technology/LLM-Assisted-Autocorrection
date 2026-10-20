@@ -34,14 +34,14 @@ if (Test-Path $config) {
     $keep = ($a -eq '' -or $a -match '^[Yy]')
 }
 if (-not $keep) {
-    Write-Host 'Paste each key and press Enter (typing is hidden). Press Enter alone to skip one.'
-    Write-Host 'You need the key for the model this version uses (Gemini by default).'
-    $gemini = Read-Plain 'Gemini API key'
-    $openai = Read-Plain 'OpenAI API key'
-    if (-not $gemini -and -not $openai) {
-        Write-Host 'No key entered, so nothing was installed. Run Install again.' -ForegroundColor Red
+    Write-Host 'Paste each key and press Enter (typing is hidden).'
+    Write-Host 'The Gemini key is required: it is the model this version uses. The OpenAI key is optional.'
+    $gemini = Read-Plain 'Gemini API key (required)'
+    if (-not $gemini) {
+        Write-Host 'A Gemini API key is required, so nothing was installed. Run Install again.' -ForegroundColor Red
         exit 1
     }
+    $openai = Read-Plain 'OpenAI API key (optional - press Enter to skip)'
     $lines = @('; LLM Autocorrect settings. Changes apply immediately - no need to restart Word.')
     if ($gemini) { $lines += "GEMINI_API_KEY=$gemini" }
     if ($openai) { $lines += "OPENAI_API_KEY=$openai" }
@@ -51,10 +51,12 @@ if (-not $keep) {
 
 Write-Host ''
 Write-Host 'Testing your keys...'
-& (Join-Path $here 'Test-Keys.ps1') -ConfigPath $config
+# GEMINI_API_KEY is required because the model this release uses (MODEL_NAME in
+# src/modCorrectParagraph.bas) is a Gemini model. Change this together with that constant.
+& (Join-Path $here 'Test-Keys.ps1') -ConfigPath $config -Require 'GEMINI_API_KEY'
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''
-    Write-Host 'A key did not work, so nothing was installed. Run Install again and re-enter the key that failed.' -ForegroundColor Red
+    Write-Host 'A required key is missing or did not work, so nothing was installed. Run Install again and re-enter it.' -ForegroundColor Red
     exit 1
 }
 

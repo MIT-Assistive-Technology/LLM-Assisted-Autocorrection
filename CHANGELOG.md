@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.4
+- Installer now requires the Gemini key (the default model's provider) and refuses to install without it, instead of accepting a key for a provider the model does not use.
+
 ## 0.1.3
 - Fix: Enter did nothing in 0.1.2 (and in the build before it). A template built on a machine that already had it installed got an empty macro table, so the key was bound to nothing. The build now unloads the installed copy, binds the bare macro name so Word records the macro, and fails if the key map and macro table disagree. **Do not use 0.1.2.**
 

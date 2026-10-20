@@ -6,7 +6,11 @@
 .NOTES
   To add a provider, add a row to $providers (and to ResolveProvider in modCorrectParagraph.bas).
 #>
-param([string]$ConfigPath = (Join-Path $env:APPDATA 'LLMAutocorrect\config.ini'))
+param(
+    [string]$ConfigPath = (Join-Path $env:APPDATA 'LLMAutocorrect\config.ini'),
+    # Config names that must be present (for example GEMINI_API_KEY); otherwise any one key is enough.
+    [string[]]$Require = @()
+)
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -31,6 +35,15 @@ function Read-Ini($path) {
 $cfg = Read-Ini $ConfigPath
 $tested = 0
 $ok = $true
+
+foreach ($name in $Require) {
+    if (-not $cfg[$name]) {
+        $label = ($providers | Where-Object { $_.Key -eq $name } | Select-Object -First 1).Name
+        if (-not $label) { $label = $name }
+        Write-Host "  [FAIL] A $label key is required but none is saved"
+        $ok = $false
+    }
+}
 
 foreach ($p in $providers) {
     $key = $cfg[$p.Key]

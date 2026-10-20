@@ -22,9 +22,9 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 
 ## Distribution
 
-- `src/*.bas` is the source of truth. `scripts/Build-Template.ps1` imports it into a fresh document through Word COM, names the VBA project `AutocorrectMacros`, binds the trigger key to that project's macro, and saves `dist\LLMAutocorrect.dotm`. The project is named explicitly, and the macro qualified with it, because Word resolves a bare macro name against every loaded project, including an installed copy of this template, which would make the binding point at the wrong project.
+- `src/*.bas` is the source of truth. `scripts/Build-Template.ps1` imports it into a fresh document through Word COM, names the VBA project `AutocorrectMacros`, binds the trigger key to the bare macro name `modCorrectParagraph.EnterAndCorrectParagraph`, and saves `dist\LLMAutocorrect.dotm`. Word records a bound macro in the file's macro table (`word/vbaData.xml`) only if it resolves the name to the project being built. If a copy of the template is already installed, Word loads it into the build session too and resolves to that copy, leaving the new file with an empty macro table and a key that does nothing. The build therefore unloads the installed copy for its session, and afterwards checks that the key map points at a macro listed in the table, failing otherwise.
 - The template lives in Word's STARTUP folder, so it loads with every Word session. The key binding is stored inside the template.
-- `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer writes the API key(s) there; the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
+- `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer writes the API key(s) there (the key for the default model's provider, Gemini, is required; the rest are optional); the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
 - A scheduled task runs `Update.ps1` 30 s after each sign-in. It compares `VERSION` with the latest GitHub release, and if newer (and Word is closed) swaps in the new template. The repo is public, so no authentication is needed.
 
 ## Known limitations (v0.1)

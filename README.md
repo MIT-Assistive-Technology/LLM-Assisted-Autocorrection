@@ -22,4 +22,4 @@ Building needs desktop Word and `gh` (GitHub CLI, logged in). See [docs/CONTRIBU
 
 ## Privacy
 
-Every finished paragraph is sent to the model provider (Google by default). Do not use this on confidential documents. API keys are stored per-user in `%APPDATA%\LLMAutocorrect\config.ini` and never enters the repo or the release.
+Every finished paragraph is sent to the model provider (Google by default). Do not use this on confidential documents. API keys are stored per-user in `%APPDATA%\LLMAutocorrect\config.ini` and never enter the repo or the release.

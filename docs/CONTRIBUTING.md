@@ -17,7 +17,7 @@ Prefer to iterate in the VBA editor (Alt+F11)? Import the `.bas` files from `src
 
 ## Changing the model or prompt
 
-Edit `MODEL_NAME` and `SYSTEM_PROMPT` at the top of `src/modCorrectParagraph.bas`. The provider and the `config.ini` key it uses are worked out from the model name in `ResolveProvider` (names starting `gemini`/`gemma` use Google, everything else uses OpenAI). If the new prompt expects a different input format, edit `BuildUserMessage` too. To add a provider, add a branch in `ResolveProvider` and a row in `installeriles\Test-Keys.ps1`.
+Edit `MODEL_NAME` and `SYSTEM_PROMPT` at the top of `src/modCorrectParagraph.bas`. The provider and the `config.ini` key it uses are worked out from the model name in `ResolveProvider` (names starting `gemini`/`gemma` use Google, everything else uses OpenAI). If the new prompt expects a different input format, edit `BuildUserMessage` too. To add a provider, add a branch in `ResolveProvider` and a row in `installer\files\Test-Keys.ps1`.
 
 ## Shipping a release
 
