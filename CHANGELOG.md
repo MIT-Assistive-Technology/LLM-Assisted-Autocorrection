@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5
 - Installer asks only for the Gemini key ("Please enter your Gemini API key (required):"); the OpenAI prompt and the intro text are gone. Other providers' keys can be added to config.ini by hand.
 
 ## 0.1.4
