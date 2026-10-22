@@ -8,10 +8,37 @@ Private Const OPENAI_AUTHORIZATION_PREFIX As String = "Bearer "
 
 Private mOpenAIApiKey As String
 
+Private Sub StopJawsSpeech()
+
+    Dim jawsApp As Object
+    Dim errorNumber As Long
+    Dim errorSource As String
+    Dim errorDescription As String
+
+    On Error GoTo JawsApiFailed
+
+    Set jawsApp = CreateObject("FSFW.JFWApi")
+    jawsApp.StopSpeech
+    Exit Sub
+
+JawsApiFailed:
+    errorNumber = Err.Number
+    errorSource = Err.Source
+    errorDescription = Err.Description
+    MsgBox "JAWS could not be asked to stop speaking." & vbCrLf & _
+        "Error " & CStr(errorNumber) & _
+        IIf(Len(errorSource) > 0, " (" & errorSource & ")", "") & _
+        ": " & errorDescription, _
+        vbExclamation, "Autocorrection"
+
+End Sub
+
 Sub EnterAndCorrectLastParagraph()
 
     Dim finishedParagraph As Range
     Dim endOfParagraph As Range
+
+    StopJawsSpeech
 
     If Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph

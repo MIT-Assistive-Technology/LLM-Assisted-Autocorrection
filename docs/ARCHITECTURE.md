@@ -4,12 +4,13 @@
 
 `EnterAndCorrectLastParagraph` is bound to Enter. With a plain caret it:
 
-1. takes the paragraph the caret is in (minus its mark),
-2. splits it into word candidates and asks OpenAI (`gpt-4o-mini`) for targeted spelling corrections only (no grammar or style rewrites),
-3. validates the response and applies the replacements right to left,
-4. moves the caret to the end of that paragraph and inserts the new paragraph.
+1. asks the JAWS COM API to stop speech,
+2. takes the paragraph the caret is in (minus its mark),
+3. splits it into word candidates and asks OpenAI (`gpt-4o-mini`) for targeted spelling corrections only (no grammar or style rewrites),
+4. validates the response and applies the replacements right to left,
+5. moves the caret to the end of that paragraph and inserts the new paragraph.
 
-With a selection, Enter just inserts a paragraph. Errors are reported in a message box.
+With a selection, Enter stops JAWS speech and then inserts a paragraph. JAWS API errors are reported in a message box, after which Word's Enter behavior continues. OpenAI errors are also reported in a message box.
 
 ## Distribution
 
