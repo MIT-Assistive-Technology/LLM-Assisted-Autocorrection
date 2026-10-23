@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Checks every API key found in config.ini by listing the provider's models (no model name
-  needed, no usage cost). Exit code 0 = at least one key present and all present keys work.
+  Checks every API key found in config.ini by querying the provider's account/models endpoint.
+  Exit code 0 = at least one key present and all present keys work.
   Used by the installer and by developers.
 .NOTES
-  To add a provider, add a row to $providers (and to ResolveProvider in modCorrectParagraph.bas).
+  To add a provider, add a row to $providers and matching request code to its VBA module.
 #>
 param(
     [string]$ConfigPath = (Join-Path $env:APPDATA 'LLMAutocorrect\config.ini'),
@@ -15,8 +15,9 @@ param(
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $providers = @(
-    @{ Name = 'Gemini'; Key = 'GEMINI_API_KEY'; Url = 'https://generativelanguage.googleapis.com/v1beta/openai/models' },
-    @{ Name = 'OpenAI'; Key = 'OPENAI_API_KEY'; Url = 'https://api.openai.com/v1/models' }
+    @{ Name = 'Gemini'; Key = 'GEMINI_API_KEY'; Header = 'Authorization'; Prefix = 'Bearer '; Url = 'https://generativelanguage.googleapis.com/v1beta/openai/models' },
+    @{ Name = 'OpenAI'; Key = 'OPENAI_API_KEY'; Header = 'Authorization'; Prefix = 'Bearer '; Url = 'https://api.openai.com/v1/models' },
+    @{ Name = 'ElevenLabs'; Key = 'ELEVENLABS_API_KEY'; Header = 'xi-api-key'; Prefix = ''; Url = 'https://api.elevenlabs.io/v1/user' }
 )
 
 function Read-Ini($path) {
@@ -50,7 +51,9 @@ foreach ($p in $providers) {
     if (-not $key) { continue }
     $tested++
     try {
-        Invoke-WebRequest -Uri $p.Url -Headers @{ Authorization = "Bearer $key" } -UseBasicParsing -TimeoutSec 20 | Out-Null
+        $headers = @{}
+        $headers[$p.Header] = $p.Prefix + $key
+        Invoke-WebRequest -Uri $p.Url -Headers $headers -UseBasicParsing -TimeoutSec 20 | Out-Null
         Write-Host "  [ OK ] $($p.Name) key"
     } catch {
         $code = ''
