@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.6
+- First version of ElevenLabs TTS has been integrated into the autocorrection pipeline. After the text is edited, the changed line will be read aloud. Currently uses a default British voice.
+
 ## 0.1.5
 - Installer asks only for the Gemini key ("Please enter your Gemini API key (required):"); the OpenAI prompt and the intro text are gone. Other providers' keys can be added to config.ini by hand.
 
