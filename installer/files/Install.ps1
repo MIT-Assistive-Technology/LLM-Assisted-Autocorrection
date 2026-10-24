@@ -39,9 +39,19 @@ if (-not $keep) {
         Write-Host 'A Gemini API key is required, so nothing was installed. Run Install again.' -ForegroundColor Red
         exit 1
     }
+    $elevenLabs = Read-Plain 'ElevenLabs API key for spoken corrections (optional; press Enter to skip)'
+    $voiceId = ''
+    if ($elevenLabs) {
+        $voiceId = (Read-Host 'ElevenLabs voice ID (required to enable speech)').Trim()
+        if (-not $voiceId) {
+            Write-Host 'No voice ID entered. Speech will stay disabled until ELEVENLABS_VOICE_ID is added to config.ini.' -ForegroundColor Yellow
+        }
+    }
     # An OpenAI key is only needed if MODEL_NAME is switched to an OpenAI model; add OPENAI_API_KEY=... to config.ini by hand.
     $lines = @('; LLM Autocorrect settings. Changes apply immediately - no need to restart Word.',
-               "GEMINI_API_KEY=$gemini")
+               "GEMINI_API_KEY=$gemini",
+               "ELEVENLABS_API_KEY=$elevenLabs",
+               "ELEVENLABS_VOICE_ID=$voiceId")
     # ASCII on purpose: a UTF-8 BOM would corrupt the first line for VBA.
     [IO.File]::WriteAllLines($config, $lines, [Text.Encoding]::ASCII)
 }
@@ -58,9 +68,26 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --- Files ------------------------------------------------------------------
-Copy-Item (Join-Path $here 'LLMAutocorrect.dotm') (Join-Path $startup 'LLMAutocorrect.dotm') -Force
+$template = Join-Path $here 'LLMAutocorrect.dotm'
+if (-not (Test-Path $template)) {
+    $sourceTemplate = Join-Path $here '..\..\dist\LLMAutocorrect.dotm'
+    if (Test-Path $sourceTemplate) {
+        $template = $sourceTemplate
+    } else {
+        throw 'LLMAutocorrect.dotm was not found. Build it with scripts\Build-Template.ps1 or run Install.cmd from the extracted release zip.'
+    }
+}
+Copy-Item $template (Join-Path $startup 'LLMAutocorrect.dotm') -Force
 Unblock-File (Join-Path $startup 'LLMAutocorrect.dotm')
-foreach ($f in 'Update.ps1', 'Test-Keys.ps1', 'VERSION') { Copy-Item (Join-Path $here $f) $appDir -Force }
+foreach ($f in 'Update.ps1', 'Test-Keys.ps1') { Copy-Item (Join-Path $here $f) $appDir -Force }
+$versionFile = Join-Path $here 'VERSION'
+if (-not (Test-Path $versionFile)) {
+    $versionFile = Join-Path $here '..\..\VERSION'
+}
+if (-not (Test-Path $versionFile)) {
+    throw 'VERSION was not found beside the installer or at the project root.'
+}
+Copy-Item $versionFile $appDir -Force
 
 # --- Automatic updates: check at every logon --------------------------------
 $updateScript = Join-Path $appDir 'Update.ps1'
@@ -82,4 +109,5 @@ $s.Save()
 
 Write-Host ''
 Write-Host 'Done! Open Word and press Enter.' -ForegroundColor Green
+Write-Host 'ElevenLabs speech runs after correction when ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are configured.'
 Write-Host 'Updates install themselves; the desktop shortcut "Update LLM Autocorrect" checks right now.'

@@ -43,3 +43,5 @@
 
 # Build output
 dist/
+# Local secrets written by `elevenlabs onboard`
+/.env.local

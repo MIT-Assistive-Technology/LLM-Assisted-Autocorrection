@@ -31,6 +31,8 @@ Public Sub EnterAndCorrectParagraph()
     Dim para As Range
     Dim target As Range
     Dim endOfParagraph As Range
+    Dim finalParagraph As Range
+    Dim shouldSpeak As Boolean
 
     If Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph
@@ -42,7 +44,7 @@ Public Sub EnterAndCorrectParagraph()
     Set target = para.Duplicate
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
-    CorrectRange target
+    shouldSpeak = CorrectRange(target)
 
     Set endOfParagraph = para.Duplicate
     endOfParagraph.MoveEnd wdCharacter, -1
@@ -51,9 +53,15 @@ Public Sub EnterAndCorrectParagraph()
 
     Selection.TypeParagraph
 
+    If shouldSpeak Then
+        Set finalParagraph = target.Document.Range(target.Start, target.Start).Paragraphs(1).Range
+        finalParagraph.MoveEnd wdCharacter, -1
+        SpeakCorrectedText finalParagraph.Text
+    End If
+
 End Sub
 
-Private Sub CorrectRange(ByVal target As Range)
+Private Function CorrectRange(ByVal target As Range) As Boolean
 
     Dim original As String
     Dim fixed As String
@@ -64,7 +72,10 @@ Private Sub CorrectRange(ByVal target As Range)
     On Error GoTo Failed
 
     original = target.Text
-    If Len(Trim$(original)) < MIN_CHARS Then Exit Sub
+    If Len(Trim$(original)) < MIN_CHARS Then
+        CorrectRange = True
+        Exit Function
+    End If
 
     stage = "contacting " & MODEL_NAME
     fixed = RequestCorrection(original)
@@ -76,23 +87,28 @@ Private Sub CorrectRange(ByVal target As Range)
     trail = Right$(original, Len(original) - Len(RTrim$(original)))
     fixed = lead & Trim$(fixed) & trail
 
-    If StrComp(fixed, original, vbBinaryCompare) = 0 Then Exit Sub
+    If StrComp(fixed, original, vbBinaryCompare) = 0 Then
+        CorrectRange = True
+        Exit Function
+    End If
     If Not ReplyLooksSane(original, fixed) Then
         MsgBox MODEL_NAME & "'s reply changed the text too much, so it was not applied.", _
             vbExclamation, "Autocorrection"
-        Exit Sub
+        CorrectRange = True
+        Exit Function
     End If
 
     stage = "applying the correction"
     ApplyDiff target, original, fixed
-    Exit Sub
+    CorrectRange = True
+    Exit Function
 
 Failed:
     MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
         "Error " & CStr(Err.Number) & ": " & Err.Description, _
         vbExclamation, "Autocorrection"
 
-End Sub
+End Function
 
 ' What the user message looks like. Keep in step with SYSTEM_PROMPT.
 Private Function BuildUserMessage(ByVal paragraphText As String) As String
