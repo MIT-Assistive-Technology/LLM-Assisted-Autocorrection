@@ -1,5 +1,6 @@
 # Configuration settings
 .env
+.env.local
 
 # Office temporary files
 ~$*
