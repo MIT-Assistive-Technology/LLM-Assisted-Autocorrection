@@ -21,6 +21,21 @@ Updates
 Updates install themselves the next time you sign in to Windows. To update right
 now, close Word and double-click "Update LLM Autocorrect" on your Desktop.
 
+Change your voice or API keys
+-----------------------------
+The macro and Enter binding are shipped in LLMAutocorrect.dotm. Do not edit the
+copy in Word's STARTUP folder. Run Install.cmd again and choose N when asked to
+replace the per-user config, then enter the Gemini key and optional ElevenLabs
+API key and voice ID. Alternatively, edit
+%APPDATA%\LLMAutocorrect\config.ini directly; changes apply without rebuilding
+the template or restarting Word.
+
+For developers changing the macro, edit the source files, build the template
+with scripts\Build-Template.ps1, then run this installer again. The installer
+copies the built template to Word's STARTUP folder. Each user keeps their own
+keys and voice ID in their own config.ini; those values are not included in the
+template or installer zip.
+
 Good to know
 ------------
 - Every finished paragraph is sent to Google (Gemini) to be checked. Do not use it on

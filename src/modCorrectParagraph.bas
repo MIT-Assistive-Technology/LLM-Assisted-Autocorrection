@@ -31,6 +31,8 @@ Public Sub EnterAndCorrectParagraph()
     Dim para As Range
     Dim target As Range
     Dim endOfParagraph As Range
+    Dim finalParagraph As Range
+    Dim shouldSpeak As Boolean
 
     If Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph
@@ -42,7 +44,7 @@ Public Sub EnterAndCorrectParagraph()
     Set target = para.Duplicate
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
-    If CorrectRange(target) Then SpeakCorrectedText target.Text
+    shouldSpeak = CorrectRange(target)
 
     Set endOfParagraph = para.Duplicate
     endOfParagraph.MoveEnd wdCharacter, -1
@@ -50,6 +52,12 @@ Public Sub EnterAndCorrectParagraph()
     endOfParagraph.Select
 
     Selection.TypeParagraph
+
+    If shouldSpeak Then
+        Set finalParagraph = target.Document.Range(target.Start, target.Start).Paragraphs(1).Range
+        finalParagraph.MoveEnd wdCharacter, -1
+        SpeakCorrectedText finalParagraph.Text
+    End If
 
 End Sub
 

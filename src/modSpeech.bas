@@ -3,7 +3,6 @@ Option Explicit
 
 Private Const SPEECH_MODEL As String = "eleven_flash_v2_5"
 Private Const SPEECH_URL As String = "https://api.elevenlabs.io/v1/text-to-speech/"
-Private Const SND_ASYNC As Long = &H1
 Private Const SND_FILENAME As Long = &H20000
 
 #If VBA7 Then
@@ -76,10 +75,11 @@ Public Sub SpeakCorrectedText(ByVal text As String)
 
     StopAndRemovePreviousAudio
     mAudioPath = SaveAudioFile(audio)
-    If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC) = 0 Then
+    If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME) = 0 Then
         Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
             "Windows could not start audio playback."
     End If
+    StopAndRemovePreviousAudio
     Exit Sub
 
 Failed:

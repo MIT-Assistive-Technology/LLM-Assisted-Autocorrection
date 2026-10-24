@@ -8,8 +8,8 @@
 2. sends the whole paragraph, wrapped in `<text></text>`, to the configured model and gets the corrected paragraph back (a stray `<text>` wrapper in the reply is stripped),
 3. restores the original leading/trailing spaces and rejects the reply if it is empty, contains line breaks the original did not, or differs in length by more than 30% (+10 characters),
 4. trims the start and end the two texts share and rewrites only the span in between through a `Range`, so formatting elsewhere in the paragraph is kept (if the paragraph contains fields or shapes, it falls back to replacing the whole paragraph),
-5. sends the final paragraph text to ElevenLabs and starts Windows playback asynchronously when speech credentials are configured,
-6. moves the caret to the end of the paragraph and inserts the new paragraph.
+5. moves the caret to the end of the paragraph and inserts the new paragraph, allowing Word's own Enter-triggered processing to finish,
+6. reads the final text from the completed paragraph and plays it to completion when speech credentials are configured.
 
 With a selection, Enter just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
 
@@ -26,7 +26,8 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - `src/*.bas` is the source of truth. `scripts/Build-Template.ps1` imports it into a fresh document through Word COM, names the VBA project `AutocorrectMacros`, binds the trigger key to the bare macro name `modCorrectParagraph.EnterAndCorrectParagraph`, and saves `dist\LLMAutocorrect.dotm`. Word records a bound macro in the file's macro table (`word/vbaData.xml`) only if it resolves the name to the project being built. If a copy of the template is already installed, Word loads it into the build session too and resolves to that copy, leaving the new file with an empty macro table and a key that does nothing. The build therefore unloads the installed copy for its session, and afterwards checks that the key map points at a macro listed in the table, failing otherwise.
 - The template lives in Word's STARTUP folder, so it loads with every Word session. The key binding is stored inside the template.
 - `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer asks for the Gemini key (required, since the default model is a Gemini model) and writes it there; a key for another provider, such as `OPENAI_API_KEY=...`, can be added to the file by hand; the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
-- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are optional. The installer offers prompts for both, and they can also be added to `config.ini` by hand. When both are set, each successfully processed paragraph is sent to ElevenLabs using `eleven_flash_v2_5` with WAV output; Windows Multimedia plays the returned WAV asynchronously from a temporary file. The previous playback file is removed when the next speech request starts. Speech errors are reported without preventing Enter from inserting the next paragraph.
+- The STARTUP `.dotm` is a generated, per-user installed copy; it is not the editable source. To update VBA behavior, change `src/*.bas`, build with `scripts\Build-Template.ps1`, and install the result with `installer\Install.cmd` or `scripts\Release.ps1 -NoPublish` followed by the bundled installer. Each user configures their own API keys and voice ID during installation or in their own `%APPDATA%\LLMAutocorrect\config.ini`; these values never enter the shared template or ZIP.
+- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are optional. The installer offers prompts for both, and they can also be added to `config.ini` by hand. When both are set, each successfully processed paragraph is sent to ElevenLabs using `eleven_flash_v2_5` with WAV output after Word completes its Enter-triggered processing; Windows Multimedia plays the returned WAV synchronously from a temporary file. Word waits for playback to finish before continuing. The temporary WAV is removed after playback. Speech errors are reported without preventing Enter from inserting the next paragraph.
 - A scheduled task runs `Update.ps1` 30 s after each sign-in. It compares `VERSION` with the latest GitHub release, and if newer (and Word is closed) swaps in the new template. The repo is public, so no authentication is needed.
 
 ## Known limitations (v0.1)
@@ -46,4 +47,4 @@ ELEVENLABS_API_KEY=your_api_key
 ELEVENLABS_VOICE_ID=your_voice_id
 ```
 
-The key is sent in the `xi-api-key` request header. ElevenLabs receives the corrected paragraph text to synthesize it. Playback starts asynchronously.
+The key is sent in the `xi-api-key` request header. ElevenLabs receives the corrected paragraph text to synthesize it. Word waits for speech playback to finish.
