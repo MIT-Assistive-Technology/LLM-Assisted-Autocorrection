@@ -96,6 +96,7 @@ $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
 # Fully qualified user (DOMAIN\user or AzureAD\user); a bare name can make Register-ScheduledTask fail with "The parameter is incorrect".
 $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
+$trigger.Delay = 'PT30S'
 $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 `
             -RestartInterval (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries

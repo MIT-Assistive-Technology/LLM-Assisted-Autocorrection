@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.7
+- Fix: the installer failed with "Register-ScheduledTask : The parameter is incorrect" (UserId) on machines where the computer name and user name are the same or the account name is otherwise ambiguous. The update task now uses the fully qualified account name (for example `PC\user`).
+
 ## 0.1.6
 - First version of ElevenLabs TTS has been integrated into the autocorrection pipeline. After the text is edited, the changed line will be read aloud. Currently uses a default British voice.
 
