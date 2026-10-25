@@ -93,11 +93,13 @@ Copy-Item $versionFile $appDir -Force
 $updateScript = Join-Path $appDir 'Update.ps1'
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
            -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updateScript`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$trigger.Delay = 'PT30S'
+# Fully qualified user (DOMAIN\user or AzureAD\user); a bare name can make Register-ScheduledTask fail with "The parameter is incorrect".
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
+$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 `
             -RestartInterval (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
 # --- Desktop shortcut for a manual update check ------------------------------
 $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Update LLM Autocorrect.lnk'
