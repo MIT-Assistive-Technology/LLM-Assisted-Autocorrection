@@ -49,11 +49,6 @@ Public Sub WaitForEscRelease()
     Loop
 End Sub
 
-' Public wrapper so other modules (modSpeech) can wait without declaring Sleep themselves.
-Public Sub SleepMs(ByVal ms As Long)
-    Sleep ms
-End Sub
-
 Public Sub SendCancellable(ByVal request As Object, ByVal body As Variant)
     request.Send body
     Do
