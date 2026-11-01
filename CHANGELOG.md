@@ -1,10 +1,5 @@
 # Changelog
 
-## 0.1.8
-- Esc now cancels an in-flight correction or speech request. A cancelled correction still inserts the paragraph break and skips speech. New module `modCancel`.
-- The Gemini and ElevenLabs requests are now asynchronous (polled in a loop) so they can be interrupted.
-- Fix: Word no longer shows "Not Responding" while corrected text is read aloud, because playback no longer holds Word up for the length of the clip.
-
 ## 0.1.7
 - Fix: the installer failed with "Register-ScheduledTask : The parameter is incorrect" (UserId) on machines where the computer name and user name are the same or the account name is otherwise ambiguous. The update task now uses the fully qualified account name (for example `PC\user`).
 
