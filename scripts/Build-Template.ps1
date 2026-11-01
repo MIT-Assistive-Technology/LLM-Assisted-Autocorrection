@@ -71,6 +71,9 @@ try {
     # stays empty and the key does nothing.
     [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $code)
 
+    $escCode = $word.BuildKeyCode(27)    # wdKeyEscape
+    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modSpeech.StopSpeech', $escCode)
+
     Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }
     $wdFormatXMLTemplateMacroEnabled = 15

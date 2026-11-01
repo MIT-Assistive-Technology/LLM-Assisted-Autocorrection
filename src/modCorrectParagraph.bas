@@ -39,6 +39,8 @@ Public Sub EnterAndCorrectParagraph()
         Exit Sub
     End If
 
+    WaitForEscRelease
+
     ' A Range follows later edits, so para is still correct after the text changes length.
     Set para = Selection.Paragraphs(1).Range
     Set target = para.Duplicate
@@ -104,6 +106,8 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     Exit Function
 
 Failed:
+    If Err.Number = ERR_CANCELLED Then CorrectRange = False: Exit Function   ' in CorrectRange
+    ' (in SpeakCorrectedText:  If Err.Number = ERR_CANCELLED Then Exit Sub)
     MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
         "Error " & CStr(Err.Number) & ": " & Err.Description, _
         vbExclamation, "Autocorrection"
@@ -248,11 +252,11 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    request.Open "POST", apiUrl, False
+    request.Open "POST", apiUrl, True          ' True = asynchronous
     request.SetTimeouts 5000, 5000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
-    request.Send ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
+    SendCancellable request, ToUtf8(requestBody)
 
     responseBody = FromUtf8(request.ResponseBody)
 
