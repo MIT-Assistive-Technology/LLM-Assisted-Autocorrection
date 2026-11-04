@@ -1,9 +1,10 @@
 Attribute VB_Name = "modCorrectParagraph"
 Option Explicit
 
-' Whole-paragraph correction. On Enter, the finished paragraph is sent to an LLM, the corrected
-' paragraph comes back, and only the part that actually changed is written into the document,
-' so formatting outside the edit survives. Bound to Enter by scripts/Build-Template.ps1.
+' On Enter, capture the text before the caret, insert the paragraph break immediately, and
+' asynchronously apply the LLM correction if that captured text has not changed. Only the part
+' that actually changed is written into the document, so formatting outside the edit survives.
+' Bound to Enter by scripts/Build-Template.ps1.
 '
 ' TO CHANGE MODEL: edit MODEL_NAME below. The provider (endpoint + which config.ini key to use)
 ' is worked out from the name in ResolveProvider. TO CHANGE PROMPT: edit SYSTEM_PROMPT and, if
@@ -25,14 +26,17 @@ Private Const MAX_CHANGE_RATIO As Double = 0.3 ' reject replies whose length dif
 Private Const MAX_CHANGE_SLACK As Long = 10    ' ...plus this many characters, for short paragraphs
 
 Private mPromptedKeys As Object                ' keys typed into the fallback prompt, by config name
+Private mCorrectionQueue As Collection
+Private mPollScheduled As Boolean
+
+Private Const POLL_MACRO_NAME As String = _
+    "modCorrectParagraph.PollPendingWork"
 
 Public Sub EnterAndCorrectParagraph()
 
-    Dim para As Range
+    Dim paragraphStart As Long
     Dim target As Range
-    Dim endOfParagraph As Range
-    Dim finalParagraph As Range
-    Dim shouldSpeak As Boolean
+    Dim paragraphText As String
 
     PlayEnterPing
 
@@ -43,76 +47,223 @@ Public Sub EnterAndCorrectParagraph()
 
     WaitForEscRelease
 
-    ' A Range follows later edits, so para is still correct after the text changes length.
-    Set para = Selection.Paragraphs(1).Range
-    Set target = para.Duplicate
-    target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
-
-    shouldSpeak = CorrectRange(target)
-
-    Set endOfParagraph = para.Duplicate
-    endOfParagraph.MoveEnd wdCharacter, -1
-    endOfParagraph.Collapse wdCollapseEnd
-    endOfParagraph.Select
+    paragraphStart = Selection.Paragraphs(1).Range.Start
+    paragraphText = ActiveDocument.Range(paragraphStart, Selection.Start).Text
 
     Selection.TypeParagraph
 
-    If shouldSpeak Then
-        Set finalParagraph = target.Document.Range(target.Start, target.Start).Paragraphs(1).Range
-        finalParagraph.MoveEnd wdCharacter, -1
-        SpeakCorrectedText finalParagraph.Text
+    Set target = ActiveDocument.Range(paragraphStart, Selection.Start - 1)
+    If StrComp(target.Text, paragraphText, vbBinaryCompare) <> 0 Then
+        MsgBox "The paragraph changed while Enter was being processed. " & _
+            "The text was left unchanged.", vbExclamation, "Autocorrection"
+        Exit Sub
+    End If
+
+    If Len(Trim$(paragraphText)) >= MIN_CHARS Then
+        QueueCorrection target, paragraphText
+    End If
+
+    If CorrectionQueuePending() Or SpeechRequestPending() Then
+        SchedulePendingWorkPoll
     End If
 
 End Sub
 
-Private Function CorrectRange(ByVal target As Range) As Boolean
+Private Sub QueueCorrection(ByVal target As Range, ByVal original As String)
 
-    Dim original As String
-    Dim fixed As String
-    Dim lead As String
-    Dim trail As String
-    Dim stage As String
+    Dim job As Object
+
+    If mCorrectionQueue Is Nothing Then Set mCorrectionQueue = New Collection
+
+    Set job = CreateObject("Scripting.Dictionary")
+    job.Add "Target", target
+    job.Add "Original", original
+    mCorrectionQueue.Add job
+
+    If mCorrectionQueue.Count = 1 Then StartNextCorrection
+
+End Sub
+
+Private Sub StartNextCorrection()
+
+    Dim job As Object
+    Dim request As Object
+    Dim errorNumber As Long
+    Dim errorDescription As String
+
+    If mCorrectionQueue Is Nothing Then Exit Sub
+    If mCorrectionQueue.Count = 0 Then Exit Sub
+
+    Set job = mCorrectionQueue(1)
+    If job.Exists("Request") Then Exit Sub
 
     On Error GoTo Failed
+    Set request = StartCorrectionRequest(CStr(job("Original")))
+    job.Add "Request", request
+    StartCorrectionHum
+    Exit Sub
 
-    original = target.Text
-    If Len(Trim$(original)) < MIN_CHARS Then
-        CorrectRange = True
-        Exit Function
+Failed:
+    errorNumber = Err.Number
+    errorDescription = Err.Description
+    StopCorrectionHum
+    MsgBox "Could not start paragraph correction." & vbCrLf & _
+        "Error " & CStr(errorNumber) & ": " & errorDescription, _
+        vbExclamation, "Autocorrection"
+    mCorrectionQueue.Remove 1
+
+End Sub
+
+Private Sub SchedulePendingWorkPoll()
+
+    If mPollScheduled Then Exit Sub
+
+    On Error GoTo Failed
+    Application.OnTime When:=Now + TimeSerial(0, 0, 1), _
+        Name:=POLL_MACRO_NAME
+    mPollScheduled = True
+    Exit Sub
+
+Failed:
+    MsgBox "Could not schedule background correction processing." & vbCrLf & _
+        "Error " & CStr(Err.Number) & ": " & Err.Description, _
+        vbExclamation, "Autocorrection"
+
+End Sub
+
+Public Sub CancelPendingWork()
+
+    Dim i As Long
+    Dim job As Object
+    Dim request As Object
+
+    If Not mCorrectionQueue Is Nothing Then
+        For i = mCorrectionQueue.Count To 1 Step -1
+            Set job = mCorrectionQueue(i)
+            If job.Exists("Request") Then
+                Set request = job("Request")
+                On Error Resume Next
+                request.Abort
+                On Error GoTo 0
+            End If
+        Next i
+        Set mCorrectionQueue = New Collection
     End If
 
-    stage = "contacting " & MODEL_NAME
-    fixed = RequestCorrection(original)
+    StopCorrectionHum
+    StopSpeech
 
-    stage = "checking the reply"
+End Sub
+
+Public Sub PollPendingWork()
+
+    Dim job As Object
+    Dim request As Object
+    Dim target As Range
+    Dim original As String
+    Dim fixed As String
+    Dim speechPending As Boolean
+    Dim errorNumber As Long
+    Dim errorDescription As String
+
+    mPollScheduled = False
+    speechPending = PollSpeechRequest()
+
+    If Not mCorrectionQueue Is Nothing Then
+        If mCorrectionQueue.Count > 0 Then
+            Set job = mCorrectionQueue(1)
+            If job.Exists("Request") Then
+                Set request = job("Request")
+                On Error GoTo RequestFailed
+                If request.WaitForResponse(0) Then
+                    StopCorrectionHum
+                    fixed = ReadCorrectionResponse(request)
+                    Set target = job("Target")
+                    original = CStr(job("Original"))
+
+                    If StrComp(target.Text, original, vbBinaryCompare) = 0 Then
+                        If ApplyCorrectionResult(target, original, fixed) Then
+                            SpeakCorrectedText fixed
+                        End If
+                    Else
+                        Application.StatusBar = _
+                            "Autocorrection skipped: that paragraph changed after Enter."
+                    End If
+
+                    mCorrectionQueue.Remove 1
+                    If mCorrectionQueue.Count > 0 Then StartNextCorrection
+                End If
+                On Error GoTo 0
+            Else
+                StartNextCorrection
+            End If
+        End If
+    End If
+
+    If CorrectionQueuePending() Or speechPending Or SpeechRequestPending() Then
+        SchedulePendingWorkPoll
+    End If
+    Exit Sub
+
+RequestFailed:
+    errorNumber = Err.Number
+    errorDescription = Err.Description
+    StopCorrectionHum
+    MsgBox "Paragraph correction failed." & vbCrLf & _
+        "Error " & CStr(errorNumber) & ": " & errorDescription, _
+        vbExclamation, "Autocorrection"
+    mCorrectionQueue.Remove 1
+    If mCorrectionQueue.Count > 0 Then StartNextCorrection
+    On Error GoTo 0
+    If CorrectionQueuePending() Or SpeechRequestPending() Then
+        SchedulePendingWorkPoll
+    End If
+
+End Sub
+
+Private Function CorrectionQueuePending() As Boolean
+
+    If mCorrectionQueue Is Nothing Then Exit Function
+    CorrectionQueuePending = mCorrectionQueue.Count > 0
+
+End Function
+
+Private Function ApplyCorrectionResult(ByVal target As Range, _
+    ByVal original As String, ByRef fixed As String) As Boolean
+
+    Dim lead As String
+    Dim trail As String
+    Dim targetStart As Long
+    Dim verified As Range
+
     fixed = StripTextTags(fixed)
-    ' Models tend to drop leading/trailing spaces; put the originals back.
     lead = Left$(original, Len(original) - Len(LTrim$(original)))
     trail = Right$(original, Len(original) - Len(RTrim$(original)))
     fixed = lead & Trim$(fixed) & trail
 
     If StrComp(fixed, original, vbBinaryCompare) = 0 Then
-        CorrectRange = True
+        Application.StatusBar = "Autocorrection found no changes for that paragraph."
+        ApplyCorrectionResult = True
         Exit Function
     End If
     If Not ReplyLooksSane(original, fixed) Then
+        Application.StatusBar = "Autocorrection reply was rejected; the paragraph was left unchanged."
         MsgBox MODEL_NAME & "'s reply changed the text too much, so it was not applied.", _
             vbExclamation, "Autocorrection"
-        CorrectRange = True
         Exit Function
     End If
 
-    stage = "applying the correction"
+    targetStart = target.Start
     ApplyDiff target, original, fixed
-    CorrectRange = True
-    Exit Function
+    Set verified = target.Document.Range(targetStart, targetStart + Len(fixed))
+    If StrComp(verified.Text, fixed, vbBinaryCompare) <> 0 Then
+        Err.Raise vbObjectError + 2003, "ApplyCorrectionResult", _
+            "Word did not retain the corrected paragraph text."
+    End If
 
-Failed:
-    If Err.Number = ERR_CANCELLED Then CorrectRange = False: Exit Function   ' in CorrectRange
-    ' (in SpeakCorrectedText:  If Err.Number = ERR_CANCELLED Then Exit Sub)
-    MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
-        "Error " & CStr(Err.Number) & ": " & Err.Description, _
-        vbExclamation, "Autocorrection"
+    Application.ScreenRefresh
+    Application.StatusBar = "Autocorrection applied to the completed paragraph."
+    ApplyCorrectionResult = True
 
 End Function
 
@@ -232,25 +383,18 @@ End Function
 
 ' Sends only model and messages: options such as temperature and max_tokens are rejected or
 ' behave differently on some models, so leaving them out keeps the model name freely swappable.
-Private Function RequestCorrection(ByVal paragraphText As String) As String
+Private Function StartCorrectionRequest(ByVal paragraphText As String) As Object
 
     Dim apiUrl As String
     Dim keyName As String
     Dim apiKey As String
     Dim requestBody As String
-    Dim responseBody As String
-    Dim choicesPosition As Long
     Dim request As Object
-    Dim errorNumber As Long
-    Dim errorSource As String
-    Dim errorDescription As String
-
-    On Error GoTo Failed
 
     ResolveProvider MODEL_NAME, apiUrl, keyName
     apiKey = GetApiKey(keyName)
     If Len(apiKey) = 0 Then
-        Err.Raise vbObjectError + 2000, "RequestCorrection", _
+        Err.Raise vbObjectError + 2000, "StartCorrectionRequest", _
             "No API key was entered. Run the macro again and enter your key (" & keyName & ")."
     End If
 
@@ -259,37 +403,34 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    request.Open "POST", apiUrl, True          ' True = asynchronous
+    request.Open "POST", apiUrl, True
     request.SetTimeouts 5000, 5000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
-    StartCorrectionHum
-    SendCancellable request, ToUtf8(requestBody)
-    StopCorrectionHum
+    request.Send ToUtf8(requestBody)
+    Set StartCorrectionRequest = request
+
+End Function
+
+Private Function ReadCorrectionResponse(ByVal request As Object) As String
+
+    Dim responseBody As String
+    Dim choicesPosition As Long
 
     responseBody = FromUtf8(request.ResponseBody)
 
     If request.Status < 200 Or request.Status >= 300 Then
-        Err.Raise vbObjectError + 2001, "RequestCorrection", _
+        Err.Raise vbObjectError + 2001, "ReadCorrectionResponse", _
             "The API returned HTTP " & CStr(request.Status) & "." & vbCrLf & Left$(responseBody, 1000)
     End If
 
     choicesPosition = InStr(1, responseBody, """choices""", vbBinaryCompare)
     If choicesPosition = 0 Then
-        Err.Raise vbObjectError + 2002, "RequestCorrection", _
+        Err.Raise vbObjectError + 2002, "ReadCorrectionResponse", _
             "The response did not contain a choices array."
     End If
 
-    RequestCorrection = JsonStringProperty(responseBody, "content", choicesPosition)
-    Exit Function
-
-Failed:
-    errorNumber = Err.Number
-    errorSource = Err.Source
-    errorDescription = Err.Description
-    StopCorrectionHum
-    On Error GoTo 0
-    Err.Raise errorNumber, errorSource, errorDescription
+    ReadCorrectionResponse = JsonStringProperty(responseBody, "content", choicesPosition)
 
 End Function
 

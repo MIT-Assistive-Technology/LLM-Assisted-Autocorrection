@@ -72,7 +72,7 @@ try {
     [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $code)
 
     $escCode = $word.BuildKeyCode(27)    # wdKeyEscape
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modSpeech.StopSpeech', $escCode)
+    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.CancelPendingWork', $escCode)
 
     Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }
