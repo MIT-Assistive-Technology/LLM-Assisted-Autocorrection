@@ -6,6 +6,9 @@ Private Const SPEECH_URL As String = "https://api.elevenlabs.io/v1/text-to-speec
 Private Const SND_FILENAME As Long = &H20000
 Private Const SND_ASYNC As Long = &H1
 Private Const SND_NODEFAULT As Long = &H2
+Private Const SND_LOOP As Long = &H8
+Private Const ENTER_PING_FILE As String = "enter-ping.wav"
+Private Const CORRECTION_HUM_FILE As String = "correction-hum.wav"
 
 #If VBA7 Then
 Private Declare PtrSafe Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
@@ -17,6 +20,78 @@ Private Declare Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
 
 Private mAudioPath As String
 Private mSpeechConfigWarned As Boolean
+Private mEnterPingWarned As Boolean
+Private mCorrectionHumPlaying As Boolean
+Private mCorrectionHumWarned As Boolean
+
+Public Sub PlayEnterPing()
+
+    Dim pingPath As String
+
+    On Error GoTo Failed
+
+    pingPath = Environ$("APPDATA") & "\LLMAutocorrect\" & ENTER_PING_FILE
+    If Len(Dir$(pingPath)) = 0 Then
+        WarnEnterPing "The Enter ping file was not found at " & pingPath & "."
+        Exit Sub
+    End If
+
+    If PlaySound(StrPtr(pingPath), 0, SND_FILENAME Or SND_NODEFAULT) = 0 Then
+        WarnEnterPing "Windows could not play the Enter ping."
+    End If
+    Exit Sub
+
+Failed:
+    WarnEnterPing "The Enter ping could not play: " & Err.Description
+
+End Sub
+
+Public Sub StartCorrectionHum()
+
+    Dim humPath As String
+
+    On Error GoTo Failed
+
+    humPath = Environ$("APPDATA") & "\LLMAutocorrect\" & CORRECTION_HUM_FILE
+    If Len(Dir$(humPath)) = 0 Then
+        WarnCorrectionHum "The correction hum file was not found at " & humPath & "."
+        Exit Sub
+    End If
+
+    If PlaySound(StrPtr(humPath), 0, _
+        SND_FILENAME Or SND_ASYNC Or SND_LOOP Or SND_NODEFAULT) = 0 Then
+        WarnCorrectionHum "Windows could not start the correction hum."
+        Exit Sub
+    End If
+
+    mCorrectionHumPlaying = True
+    Exit Sub
+
+Failed:
+    WarnCorrectionHum "The correction hum could not start: " & Err.Description
+
+End Sub
+
+Public Sub StopCorrectionHum()
+    If mCorrectionHumPlaying Then
+        PlaySound 0, 0, 0
+        mCorrectionHumPlaying = False
+    End If
+End Sub
+
+Private Sub WarnEnterPing(ByVal message As String)
+    If mEnterPingWarned Then Exit Sub
+    mEnterPingWarned = True
+    MsgBox message & vbCrLf & "Autocorrection will continue without the ping.", _
+        vbExclamation, "Enter sound"
+End Sub
+
+Private Sub WarnCorrectionHum(ByVal message As String)
+    If mCorrectionHumWarned Then Exit Sub
+    mCorrectionHumWarned = True
+    MsgBox message & vbCrLf & "Autocorrection will continue without the hum.", _
+        vbExclamation, "Correction sound"
+End Sub
 
 Public Sub SpeakCorrectedText(ByVal text As String)
 
@@ -104,6 +179,7 @@ End Sub
 Private Sub StopAndRemovePreviousAudio()
 
     PlaySound 0, 0, 0
+    mCorrectionHumPlaying = False
     If Len(mAudioPath) > 0 Then
         If Len(Dir$(mAudioPath)) > 0 Then Kill mAudioPath
         mAudioPath = ""
