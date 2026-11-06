@@ -79,7 +79,7 @@ if (-not (Test-Path $template)) {
 }
 Copy-Item $template (Join-Path $startup 'LLMAutocorrect.dotm') -Force
 Unblock-File (Join-Path $startup 'LLMAutocorrect.dotm')
-foreach ($f in 'Update.ps1', 'Test-Keys.ps1') { Copy-Item (Join-Path $here $f) $appDir -Force }
+foreach ($f in 'Update.ps1', 'Test-Keys.ps1', 'Set-Keys.ps1') { Copy-Item (Join-Path $here $f) $appDir -Force }
 $versionFile = Join-Path $here 'VERSION'
 if (-not (Test-Path $versionFile)) {
     $versionFile = Join-Path $here '..\..\VERSION'
@@ -108,6 +108,13 @@ $sh = New-Object -ComObject WScript.Shell
 $s = $sh.CreateShortcut($lnk)
 $s.TargetPath = 'powershell.exe'
 $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$updateScript`" -Interactive"
+$s.Save()
+
+# --- Desktop shortcut for changing the API keys ------------------------------
+$keysLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Change LLM Autocorrect Keys.lnk'
+$s = $sh.CreateShortcut($keysLnk)
+$s.TargetPath = 'powershell.exe'
+$s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $appDir 'Set-Keys.ps1')`""
 $s.Save()
 
 Write-Host ''

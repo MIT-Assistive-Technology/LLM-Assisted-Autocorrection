@@ -14,6 +14,7 @@ $appDir = Join-Path $env:APPDATA 'LLMAutocorrect'
 Unregister-ScheduledTask -TaskName 'LLMAutocorrect Update' -Confirm:$false -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $env:APPDATA 'Microsoft\Word\STARTUP\LLMAutocorrect.dotm') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Update LLM Autocorrect.lnk') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Change LLM Autocorrect Keys.lnk') -Force -ErrorAction SilentlyContinue
 
 $a = Read-Host 'Also delete the saved API keys? [y/N]'
 if ($a -match '^[Yy]') { Remove-Item $appDir -Recurse -Force -ErrorAction SilentlyContinue }
