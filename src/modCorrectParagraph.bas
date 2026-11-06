@@ -96,6 +96,9 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     Dim trail As String
     Dim stage As String
     Dim t As Double
+    Dim elapsedMs As Long
+    Dim errNumber As Long
+    Dim errDescription As String
 
     On Error GoTo Failed
 
@@ -136,10 +139,16 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     Exit Function
 
 Failed:
-    LogLine "  FAILED while " & stage & ": " & Err.Number & " " & Err.Description
-    MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
-        "Error " & CStr(Err.Number) & ": " & Err.Description, _
-        vbExclamation, "Autocorrection"
+    errNumber = Err.Number
+    errDescription = Err.Description
+    If Left$(stage, 10) = "contacting" Then
+        elapsedMs = SinceMs(t)
+        LogLine "  FAILED while " & stage & " (after " & elapsedMs & " ms): " & errNumber & " " & errDescription
+        ReportApiFailure ProviderName(ActiveModel()), ActiveModel(), errNumber, errDescription, elapsedMs, "Your text was left as typed."
+    Else
+        LogLine "  FAILED while " & stage & ": " & errNumber & " " & errDescription
+        ReportEditFailure ProviderName(ActiveModel()), stage, errNumber, errDescription
+    End If
 
 End Function
 
@@ -283,8 +292,7 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     ResolveProvider model, apiUrl, keyName
     apiKey = GetApiKey(keyName)
     If Len(apiKey) = 0 Then
-        Err.Raise vbObjectError + 2000, "RequestCorrection", _
-            "No API key was entered. Run the macro again and enter your key (" & keyName & ")."
+        Err.Raise ERR_NO_KEY, "RequestCorrection", "No API key is saved (" & keyName & ")."
     End If
 
     ' Gemini models think before answering, which is wasted time on a spelling fix: "minimal" cut
@@ -300,7 +308,7 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
     request.Open "POST", apiUrl, False
-    request.SetTimeouts 5000, 5000, 20000, 60000
+    request.SetTimeouts 5000, 10000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
     t = NowMs()
@@ -310,7 +318,8 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     responseBody = FromUtf8(request.ResponseBody)
 
     If request.Status < 200 Or request.Status >= 300 Then
-        Err.Raise vbObjectError + 2001, "RequestCorrection", _
+        RememberHttp request.Status, responseBody
+        Err.Raise ERR_HTTP, "RequestCorrection", _
             "The API returned HTTP " & CStr(request.Status) & "." & vbCrLf & Left$(responseBody, 1000)
     End If
 

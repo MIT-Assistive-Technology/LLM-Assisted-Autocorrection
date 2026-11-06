@@ -21,8 +21,9 @@ Private mSpeechConfigWarned As Boolean
 ' cached: for fixed phrases (the mode notices). The audio is saved under %APPDATA%\LLMAutocorrect\cache the
 ' first time, then played from disk with no request, and playback does not block, so pressing the
 ' mode key quickly never waits on the voice.
+' background: play without waiting for the clip to finish (used for error messages read aloud).
 Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
-    Optional ByVal cached As Boolean = False)
+    Optional ByVal cached As Boolean = False, Optional ByVal background As Boolean = False)
 
     Dim apiKey As String
     Dim voiceId As String
@@ -73,7 +74,8 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
     statusCode = request.Status
     If statusCode < 200 Or statusCode >= 300 Then
         responseText = request.ResponseText
-        Err.Raise vbObjectError + 2100, "SpeakCorrectedText", _
+        RememberHttp statusCode, responseText
+        Err.Raise ERR_HTTP, "SpeakCorrectedText", _
             "ElevenLabs returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
             Left$(responseText, 1500)
     End If
@@ -99,6 +101,11 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
 
     StopAndRemovePreviousAudio
     mAudioPath = SaveAudioFile(audio)
+    If background Then
+        ' The temp file is removed by StopAndRemovePreviousAudio on the next spoken text.
+        PlaySound StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC
+        Exit Sub
+    End If
     If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME) = 0 Then
         Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
             "Windows could not start audio playback."
@@ -110,9 +117,7 @@ Failed:
     errorNumber = Err.Number
     errorDescription = Err.Description
     If quiet Then Exit Sub
-    MsgBox "ElevenLabs speech failed." & vbCrLf & _
-        "Error " & CStr(errorNumber) & ": " & errorDescription, _
-        vbExclamation, "ElevenLabs speech"
+    ReportApiFailure "ElevenLabs", SPEECH_MODEL, errorNumber, errorDescription, 0, "Narration was skipped."
 
 End Sub
 
