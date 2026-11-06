@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Change the saved API keys and voice ID without reinstalling.
-  Shows what is saved (keys masked); press Enter to keep a value or type a new one.
+  Shows what is saved (keys masked, plus the Gemini model and reasoning effort); press Enter to keep a value or type a new one.
   The new settings are tested before they replace config.ini. Word does not need to be closed.
 .NOTES
   Run from the "Change LLM Autocorrect Keys" desktop shortcut. Test-Keys.ps1 must sit beside this script.
@@ -40,6 +40,10 @@ function Set-Setting($lines, $name, $value) {
     return $out.ToArray()
 }
 
+# Keep in step with MODEL_NAME and REASONING_DEFAULT in src/modCorrectParagraph.bas.
+$defaultModel = 'gemini-3-flash-preview'
+$defaultEffort = 'minimal'
+
 function Mask($v) {
     if (-not $v) { return '(not set)' }
     if ($v.Length -le 8) { return '****' }
@@ -70,14 +74,19 @@ $lines = [IO.File]::ReadAllLines($ConfigPath)
 $gemini = Get-Setting $lines 'GEMINI_API_KEY'
 $eleven = Get-Setting $lines 'ELEVENLABS_API_KEY'
 $voice  = Get-Setting $lines 'ELEVENLABS_VOICE_ID'
+$model  = Get-Setting $lines 'GEMINI_MODEL'
+$effort = Get-Setting $lines 'GEMINI_REASONING'
 
 Write-Host 'Saved now:'
 Write-Host "  Gemini API key      $(Mask $gemini)"
 Write-Host "  ElevenLabs API key  $(Mask $eleven)"
 Write-Host "  ElevenLabs voice ID $(if ($voice) { $voice } else { '(not set)' })"
+Write-Host "  Gemini model        $(if ($model) { $model } else { "$defaultModel (default)" })"
+Write-Host "  Gemini reasoning    $(if ($effort) { $effort } else { "$defaultEffort (default)" })"
 Write-Host ''
 Write-Host 'Press Enter to keep a value, or type a new one. Typing is hidden for keys.'
-Write-Host 'To remove the ElevenLabs key or voice ID, type  none'
+Write-Host 'To remove the ElevenLabs key or voice ID, type  none. To reset the Gemini model or reasoning, type  default'
+Write-Host 'Reasoning is one of: minimal (fastest), low, medium, high.'
 Write-Host ''
 
 $new = Read-Plain 'New Gemini API key'
@@ -89,6 +98,16 @@ if ($new -ieq 'none') { $eleven = '' } elseif ($new) { $eleven = $new }
 $new = (Read-Host 'New ElevenLabs voice ID').Trim()
 if ($new -ieq 'none') { $voice = '' } elseif ($new) { $voice = $new }
 
+$new = (Read-Host 'New Gemini model').Trim()
+if ($new -ieq 'default') { $model = '' } elseif ($new) { $model = $new }
+
+$new = (Read-Host 'New Gemini reasoning (minimal, low, medium, high)').Trim().ToLower()
+if ($new -eq 'default') { $effort = '' } elseif ($new) { $effort = $new }
+if ($effort -and $effort -notin 'minimal', 'low', 'medium', 'high') {
+    Write-Host "'$effort' is not one of minimal, low, medium, high, so nothing was changed." -ForegroundColor Red
+    Finish 1
+}
+
 if (-not $gemini) {
     Write-Host 'A Gemini API key is required, so nothing was changed.' -ForegroundColor Red
     Finish 1
@@ -97,6 +116,8 @@ if (-not $gemini) {
 $lines = Set-Setting $lines 'GEMINI_API_KEY' $gemini
 $lines = Set-Setting $lines 'ELEVENLABS_API_KEY' $eleven
 $lines = Set-Setting $lines 'ELEVENLABS_VOICE_ID' $voice
+$lines = Set-Setting $lines 'GEMINI_MODEL' $model
+$lines = Set-Setting $lines 'GEMINI_REASONING' $effort
 
 # Test the new settings from a temporary file so a typo never replaces working keys.
 $tmp = "$ConfigPath.new"

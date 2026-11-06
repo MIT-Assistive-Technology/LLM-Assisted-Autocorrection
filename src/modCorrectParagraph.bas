@@ -5,14 +5,16 @@ Option Explicit
 ' paragraph comes back, and only the part that actually changed is written into the document,
 ' so formatting outside the edit survives. Bound to Enter by scripts/Build-Template.ps1.
 '
-' TO CHANGE MODEL: edit MODEL_NAME below. The provider (endpoint + which config.ini key to use)
+' TO CHANGE MODEL: set GEMINI_MODEL in config.ini (the 'Change LLM Autocorrect Keys' shortcut does
+' this), or edit MODEL_NAME below, which is the default. The provider (endpoint + which config.ini key to use)
 ' is worked out from the name in ResolveProvider. TO CHANGE PROMPT: edit SYSTEM_PROMPT and, if
 ' the prompt expects it, BuildUserMessage / StripTextTags.
 '
 ' Reuses the JSON helpers in modAutocorrect (Anthony's token-based OpenAI version, which is
 ' kept but no longer bound to a key).
 
-Private Const MODEL_NAME As String = "gemini-3-flash-preview"
+Private Const MODEL_NAME As String = "gemini-3-flash-preview"   ' default; GEMINI_MODEL in config.ini overrides it
+Private Const REASONING_DEFAULT As String = "minimal"           ' default; GEMINI_REASONING in config.ini overrides it
 
 Private Const SYSTEM_PROMPT As String = _
     "Fix the typing errors in the text inside <text></text>. " & _
@@ -103,10 +105,10 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         Exit Function
     End If
 
-    stage = "contacting " & MODEL_NAME
+    stage = "contacting " & ActiveModel()
     t = NowMs()
     fixed = RequestCorrection(original)
-    LogLine "  request " & MODEL_NAME & " (" & Len(original) & " chars)=" & SinceMs(t) & "ms"
+    LogLine "  request " & ActiveModel() & " (" & Len(original) & " chars)=" & SinceMs(t) & "ms"
 
     stage = "checking the reply"
     fixed = StripTextTags(fixed)
@@ -120,7 +122,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         Exit Function
     End If
     If Not ReplyLooksSane(original, fixed) Then
-        MsgBox MODEL_NAME & "'s reply changed the text too much, so it was not applied.", _
+        MsgBox ActiveModel() & "'s reply changed the text too much, so it was not applied.", _
             vbExclamation, "Autocorrection"
         CorrectRange = True
         Exit Function
@@ -139,6 +141,12 @@ Failed:
         "Error " & CStr(Err.Number) & ": " & Err.Description, _
         vbExclamation, "Autocorrection"
 
+End Function
+
+' The model in use: GEMINI_MODEL from config.ini (re-read each call, so a change applies at once),
+' otherwise MODEL_NAME.
+Private Function ActiveModel() As String
+    ActiveModel = ConfigValue("GEMINI_MODEL", MODEL_NAME)
 End Function
 
 ' What the user message looks like. Keep in step with SYSTEM_PROMPT.
@@ -255,27 +263,38 @@ Private Function GetApiKey(ByVal keyName As String) As String
 
 End Function
 
-' Sends only model and messages: options such as temperature and max_tokens are rejected or
-' behave differently on some models, so leaving them out keeps the model name freely swappable.
+' Sends the model and messages, plus reasoning_effort for Gemini. Options such as temperature and
+' max_tokens are rejected or behave differently on some models, so leaving them out keeps the model
+' name freely swappable.
 Private Function RequestCorrection(ByVal paragraphText As String) As String
 
     Dim apiUrl As String
     Dim keyName As String
     Dim apiKey As String
     Dim requestBody As String
+    Dim reasoning As String
+    Dim model As String
     Dim responseBody As String
     Dim choicesPosition As Long
     Dim request As Object
     Dim t As Double
 
-    ResolveProvider MODEL_NAME, apiUrl, keyName
+    model = ActiveModel()
+    ResolveProvider model, apiUrl, keyName
     apiKey = GetApiKey(keyName)
     If Len(apiKey) = 0 Then
         Err.Raise vbObjectError + 2000, "RequestCorrection", _
             "No API key was entered. Run the macro again and enter your key (" & keyName & ")."
     End If
 
-    requestBody = "{""model"":""" & JsonEscape(MODEL_NAME) & """," & _
+    ' Gemini models think before answering, which is wasted time on a spelling fix: "minimal" cut
+    ' requests from about 2 s to under 1 s in testing. Other models may reject the field, so it is
+    ' sent to Gemini only.
+    If Left$(LCase$(model), 6) = "gemini" Then
+        reasoning = """reasoning_effort"":""" & JsonEscape(ConfigValue("GEMINI_REASONING", REASONING_DEFAULT)) & ""","
+    End If
+
+    requestBody = "{""model"":""" & JsonEscape(model) & """," & reasoning & _
         """messages"":[{""role"":""system"",""content"":""" & JsonEscape(SYSTEM_PROMPT) & """}," & _
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
