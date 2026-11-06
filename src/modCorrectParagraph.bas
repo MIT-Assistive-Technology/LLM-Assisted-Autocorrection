@@ -125,8 +125,9 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         Exit Function
     End If
     If Not ReplyLooksSane(original, fixed) Then
-        MsgBox ActiveModel() & "'s reply changed the text too much, so it was not applied.", _
-            vbExclamation, "Autocorrection"
+        ' Skipped silently; the log keeps what was sent and what came back, to tune the check.
+        LogLine "  SKIPPED reply that changed the text too much (" & Len(original) & " -> " & Len(fixed) & _
+            " chars): original=[" & Left$(original, 200) & "] reply=[" & Left$(fixed, 200) & "]"
         CorrectRange = True
         Exit Function
     End If
