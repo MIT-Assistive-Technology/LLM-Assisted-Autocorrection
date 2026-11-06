@@ -113,4 +113,5 @@ $s.Save()
 Write-Host ''
 Write-Host 'Done! Open Word and press Enter.' -ForegroundColor Green
 Write-Host 'ElevenLabs speech runs after correction when ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are configured.'
+Write-Host 'Press the ` key in Word to switch between autocorrect, autocorrect and narrate, and off.'
 Write-Host 'Updates install themselves; the desktop shortcut "Update LLM Autocorrect" checks right now.'

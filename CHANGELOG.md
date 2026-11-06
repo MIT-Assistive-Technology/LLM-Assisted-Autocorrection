@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- Faster mode switching: the spoken mode announcements are saved after the first time (in %APPDATA%\LLMAutocorrect\cache) and play without blocking, so pressing the ` key quickly no longer waits on the voice.
+- New: the ` key cycles Correction, Correction + Narration and Off. The mode shows in Word's status bar for a couple of seconds (on Enter and when it changes) and is spoken when ElevenLabs is available. With no Gemini key only Off is available; without ElevenLabs configured, Narrate is skipped.
+- Debug timing log at %APPDATA%\LLMAutocorrect\debug.log (one line per step of each Enter).
+
 ## 0.1.7
 - Fix: the installer failed with "Register-ScheduledTask : The parameter is incorrect" (UserId) on machines where the computer name and user name are the same or the account name is otherwise ambiguous. The update task now uses the fully qualified account name (for example `PC\user`).
 

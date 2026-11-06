@@ -33,9 +33,19 @@ Public Sub EnterAndCorrectParagraph()
     Dim endOfParagraph As Range
     Dim finalParagraph As Range
     Dim shouldSpeak As Boolean
+    Dim mode As Long
+    Dim t0 As Double
+    Dim t As Double
 
-    If Selection.Type <> wdSelectionIP Then
+    t0 = NowMs()
+    t = t0
+    mode = CurrentMode()        ' Off, or no Gemini key: nothing is called, Enter only types
+    LogLine "ENTER start: mode=" & mode & " docEnd=" & ActiveDocument.Content.End & _
+        " currentMode=" & SinceMs(t) & "ms"
+    If mode = MODE_OFF Or Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph
+        ShowModeStatus
+        LogLine "ENTER off/selection: total=" & SinceMs(t0) & "ms"
         Exit Sub
     End If
 
@@ -44,20 +54,35 @@ Public Sub EnterAndCorrectParagraph()
     Set target = para.Duplicate
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
+    t = NowMs()
     shouldSpeak = CorrectRange(target)
+    LogLine "ENTER correctRange=" & SinceMs(t) & "ms"
 
+    t = NowMs()
     Set endOfParagraph = para.Duplicate
     endOfParagraph.MoveEnd wdCharacter, -1
     endOfParagraph.Collapse wdCollapseEnd
     endOfParagraph.Select
+    LogLine "ENTER select=" & SinceMs(t) & "ms"
 
+    t = NowMs()
     Selection.TypeParagraph
+    LogLine "ENTER typeParagraph=" & SinceMs(t) & "ms"
 
-    If shouldSpeak Then
+    t = NowMs()
+    ShowModeStatus
+    LogLine "ENTER showModeStatus=" & SinceMs(t) & "ms"
+
+    ' Narrate mode only; CurrentMode already requires the ElevenLabs key and voice ID.
+    If shouldSpeak And mode = MODE_NARRATE Then
         Set finalParagraph = target.Document.Range(target.Start, target.Start).Paragraphs(1).Range
         finalParagraph.MoveEnd wdCharacter, -1
+        t = NowMs()
         SpeakCorrectedText finalParagraph.Text
+        LogLine "ENTER speak=" & SinceMs(t) & "ms"
     End If
+
+    LogLine "ENTER done: total=" & SinceMs(t0) & "ms"
 
 End Sub
 
@@ -68,6 +93,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     Dim lead As String
     Dim trail As String
     Dim stage As String
+    Dim t As Double
 
     On Error GoTo Failed
 
@@ -78,7 +104,9 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     End If
 
     stage = "contacting " & MODEL_NAME
+    t = NowMs()
     fixed = RequestCorrection(original)
+    LogLine "  request " & MODEL_NAME & " (" & Len(original) & " chars)=" & SinceMs(t) & "ms"
 
     stage = "checking the reply"
     fixed = StripTextTags(fixed)
@@ -99,11 +127,14 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     End If
 
     stage = "applying the correction"
+    t = NowMs()
     ApplyDiff target, original, fixed
+    LogLine "  applyDiff=" & SinceMs(t) & "ms"
     CorrectRange = True
     Exit Function
 
 Failed:
+    LogLine "  FAILED while " & stage & ": " & Err.Number & " " & Err.Description
     MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
         "Error " & CStr(Err.Number) & ": " & Err.Description, _
         vbExclamation, "Autocorrection"
@@ -235,6 +266,7 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     Dim responseBody As String
     Dim choicesPosition As Long
     Dim request As Object
+    Dim t As Double
 
     ResolveProvider MODEL_NAME, apiUrl, keyName
     apiKey = GetApiKey(keyName)
@@ -252,7 +284,9 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     request.SetTimeouts 5000, 5000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
+    t = NowMs()
     request.Send ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
+    LogLine "    http send=" & SinceMs(t) & "ms status=" & request.Status
 
     responseBody = FromUtf8(request.ResponseBody)
 
