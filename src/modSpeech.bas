@@ -5,6 +5,7 @@ Private Const SPEECH_MODEL As String = "eleven_flash_v2_5"
 Private Const SPEECH_URL As String = "https://api.elevenlabs.io/v1/text-to-speech/"
 Private Const SND_FILENAME As Long = &H20000
 Private Const SND_ASYNC As Long = &H1             ' return at once; a new sound cuts off the one playing
+Private Const SND_NODEFAULT As Long = &H2
 
 #If VBA7 Then
 Private Declare PtrSafe Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
@@ -21,9 +22,8 @@ Private mSpeechConfigWarned As Boolean
 ' cached: for fixed phrases (the mode notices). The audio is saved under %APPDATA%\LLMAutocorrect\cache the
 ' first time, then played from disk with no request, and playback does not block, so pressing the
 ' mode key quickly never waits on the voice.
-' background: play without waiting for the clip to finish (used for error messages read aloud).
 Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
-    Optional ByVal cached As Boolean = False, Optional ByVal background As Boolean = False)
+    Optional ByVal cached As Boolean = False)
 
     Dim apiKey As String
     Dim voiceId As String
@@ -55,7 +55,7 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
     If cached Then
         cachePath = NoticeCachePath(voiceId, text)
         If Len(Dir$(cachePath)) > 0 Then
-            PlaySound StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC
+            PlaySound StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT
             Exit Sub
         End If
     End If
@@ -64,12 +64,12 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
         """model_id"":""" & SPEECH_MODEL & """}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    request.Open "POST", SPEECH_URL & voiceId & "?output_format=wav_24000", False
+    request.Open "POST", SPEECH_URL & voiceId & "?output_format=wav_24000", True
     request.SetTimeouts 5000, 5000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Accept", "application/octet-stream"
     request.SetRequestHeader "xi-api-key", apiKey
-    request.Send ToUtf8(requestBody)
+    SendCancellable request, ToUtf8(requestBody)
 
     statusCode = request.Status
     If statusCode < 200 Or statusCode >= 300 Then
@@ -92,7 +92,7 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
 
     If cached Then
         SaveAudioFile audio, cachePath
-        If PlaySound(StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC) = 0 Then
+        If PlaySound(StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
             Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
                 "Windows could not start audio playback."
         End If
@@ -101,24 +101,27 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
 
     StopAndRemovePreviousAudio
     mAudioPath = SaveAudioFile(audio)
-    If background Then
-        ' The temp file is removed by StopAndRemovePreviousAudio on the next spoken text.
-        PlaySound StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC
-        Exit Sub
+    If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
+        Err.Raise vbObjectError + 2102, "SpeakCorrectedText", "Windows could not start audio playback."
     End If
-    If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME) = 0 Then
-        Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
-            "Windows could not start audio playback."
-    End If
-    StopAndRemovePreviousAudio
+
     Exit Sub
 
 Failed:
     errorNumber = Err.Number
     errorDescription = Err.Description
+    On Error Resume Next
+    StopAndRemovePreviousAudio
+    On Error GoTo 0
+    If errorNumber = ERR_CANCELLED Then Exit Sub         ' Esc pressed
     If quiet Then Exit Sub
     ReportApiFailure "ElevenLabs", SPEECH_MODEL, errorNumber, errorDescription, 0, "Narration was skipped."
 
+End Sub
+
+Public Sub StopSpeech()
+    On Error Resume Next
+    StopAndRemovePreviousAudio
 End Sub
 
 Private Sub StopAndRemovePreviousAudio()

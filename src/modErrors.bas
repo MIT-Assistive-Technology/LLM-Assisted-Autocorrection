@@ -96,12 +96,12 @@ Public Sub ReportEditFailure(ByVal provider As String, ByVal stage As String, By
 End Sub
 
 ' Shows the dialog. In Correction + Narration mode the message is also read aloud first (without the
-' details), playing in the background so the dialog is not held up. If the voice cannot be reached,
+' details). Playback does not block, so the dialog is not held up. If the voice cannot be reached,
 ' that is ignored and the dialog is still shown.
 Private Sub ShowProblem(ByVal message As String, ByVal detail As String, ByVal speak As Boolean)
 
     If speak Then
-        If CurrentMode() = MODE_NARRATE Then SpeakCorrectedText message, True, False, True
+        If CurrentMode() = MODE_NARRATE Then SpeakCorrectedText message, True
     End If
 
     If Len(detail) > 0 Then message = message & vbCrLf & vbCrLf & "Details: " & detail

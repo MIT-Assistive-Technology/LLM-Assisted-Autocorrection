@@ -53,6 +53,8 @@ Public Sub EnterAndCorrectParagraph()
         Exit Sub
     End If
 
+    WaitForEscRelease
+
     ' A Range follows later edits, so para is still correct after the text changes length.
     Set para = Selection.Paragraphs(1).Range
     Set target = para.Duplicate
@@ -154,6 +156,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
 Failed:
     errNumber = Err.Number
     errDescription = Err.Description
+    If errNumber = ERR_CANCELLED Then Exit Function      ' Esc pressed: leave the text as typed, no dialog
     If Left$(stage, 10) = "contacting" Then
         elapsedMs = SinceMs(t)
         LogLine "  FAILED while " & stage & " (after " & elapsedMs & " ms): " & errNumber & " " & errDescription
@@ -339,12 +342,12 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    request.Open "POST", apiUrl, False
+    request.Open "POST", apiUrl, True          ' True = asynchronous, so Esc can cancel the wait
     request.SetTimeouts 5000, 10000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
     t = NowMs()
-    request.Send ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
+    SendCancellable request, ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
     LogLine "    http send=" & SinceMs(t) & "ms status=" & request.Status
 
     responseBody = FromUtf8(request.ResponseBody)
