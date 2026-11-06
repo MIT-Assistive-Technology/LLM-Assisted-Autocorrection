@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Pressing Enter on a paragraph that has not changed since it was last corrected no longer calls the model or reads it aloud. The list is kept per Word session.
 - In Correction + Narration mode, error messages are also read aloud (the details line is not). Failures after the reply arrives (unreadable reply, document would not take the edit) use the same plain wording as other errors.
 - A reply that changes the text too much is now skipped silently and recorded in debug.log, with no dialog.
 - Faster mode switching: the spoken mode announcements are saved after the first time (in %APPDATA%\LLMAutocorrect\cache) and play without blocking, so pressing the ` key quickly no longer waits on the voice.

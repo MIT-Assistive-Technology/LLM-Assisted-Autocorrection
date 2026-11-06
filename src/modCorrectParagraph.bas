@@ -27,6 +27,8 @@ Private Const MAX_CHANGE_RATIO As Double = 0.3 ' reject replies whose length dif
 Private Const MAX_CHANGE_SLACK As Long = 10    ' ...plus this many characters, for short paragraphs
 
 Private mPromptedKeys As Object                ' keys typed into the fallback prompt, by config name
+Private mHandled As Object                     ' paragraph texts already corrected (or judged fine) this session
+Private Const MAX_HANDLED As Long = 300
 
 Public Sub EnterAndCorrectParagraph()
 
@@ -57,8 +59,14 @@ Public Sub EnterAndCorrectParagraph()
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
     t = NowMs()
-    shouldSpeak = CorrectRange(target)
-    LogLine "ENTER correctRange=" & SinceMs(t) & "ms"
+    If AlreadyHandled(target.Text) Then
+        ' Unchanged since the last pass: Enter just types, with no request and no narration.
+        shouldSpeak = False
+        LogLine "ENTER unchanged since last pass: skipped"
+    Else
+        shouldSpeak = CorrectRange(target)
+        LogLine "ENTER correctRange=" & SinceMs(t) & "ms"
+    End If
 
     t = NowMs()
     Set endOfParagraph = para.Duplicate
@@ -121,6 +129,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     fixed = lead & Trim$(fixed) & trail
 
     If StrComp(fixed, original, vbBinaryCompare) = 0 Then
+        RememberHandled original
         CorrectRange = True
         Exit Function
     End If
@@ -128,6 +137,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         ' Skipped silently; the log keeps what was sent and what came back, to tune the check.
         LogLine "  SKIPPED reply that changed the text too much (" & Len(original) & " -> " & Len(fixed) & _
             " chars): original=[" & Left$(original, 200) & "] reply=[" & Left$(fixed, 200) & "]"
+        RememberHandled original
         CorrectRange = True
         Exit Function
     End If
@@ -136,6 +146,8 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     t = NowMs()
     ApplyDiff target, original, fixed
     LogLine "  applyDiff=" & SinceMs(t) & "ms"
+    RememberHandled original      ' so undoing the correction is not corrected again
+    RememberHandled fixed
     CorrectRange = True
     Exit Function
 
@@ -152,6 +164,25 @@ Failed:
     End If
 
 End Function
+
+' True if this exact paragraph text was already sent and settled earlier in this Word session, so
+' pressing Enter on a line that has not changed does not call the model again. A failed request is not
+' remembered, so it can be retried.
+Private Function AlreadyHandled(ByVal text As String) As Boolean
+    If mHandled Is Nothing Then Exit Function
+    AlreadyHandled = mHandled.Exists(text)
+End Function
+
+Private Sub RememberHandled(ByVal text As String)
+
+    If mHandled Is Nothing Then
+        Set mHandled = CreateObject("Scripting.Dictionary")
+        mHandled.CompareMode = 0            ' binary: case and spacing matter
+    End If
+    If mHandled.Count >= MAX_HANDLED Then mHandled.RemoveAll
+    mHandled(text) = True
+
+End Sub
 
 ' The model in use: GEMINI_MODEL from config.ini (re-read each call, so a change applies at once),
 ' otherwise MODEL_NAME.
