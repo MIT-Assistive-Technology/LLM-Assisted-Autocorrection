@@ -4,8 +4,11 @@ Option Explicit
 Private Const SPEECH_MODEL As String = "eleven_flash_v2_5"
 Private Const SPEECH_URL As String = "https://api.elevenlabs.io/v1/text-to-speech/"
 Private Const SND_FILENAME As Long = &H20000
-Private Const SND_ASYNC As Long = &H1
+Private Const SND_ASYNC As Long = &H1             ' return at once; a new sound cuts off the one playing
 Private Const SND_NODEFAULT As Long = &H2
+Private Const SND_LOOP As Long = &H8
+Private Const ENTER_PING_FILE As String = "enter-ping.wav"
+Private Const CORRECTION_HUM_FILE As String = "correction-hum.wav"
 
 #If VBA7 Then
 Private Declare PtrSafe Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
@@ -17,8 +20,85 @@ Private Declare Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
 
 Private mAudioPath As String
 Private mSpeechConfigWarned As Boolean
+Private mEnterPingWarned As Boolean
+Private mCorrectionHumPlaying As Boolean
+Private mCorrectionHumWarned As Boolean
 
-Public Sub SpeakCorrectedText(ByVal text As String)
+Public Sub PlayEnterPing()
+
+    Dim pingPath As String
+
+    On Error GoTo Failed
+
+    pingPath = Environ$("APPDATA") & "\LLMAutocorrect\" & ENTER_PING_FILE
+    If Len(Dir$(pingPath)) = 0 Then
+        WarnEnterPing "The Enter ping file was not found at " & pingPath & "."
+        Exit Sub
+    End If
+
+    If PlaySound(StrPtr(pingPath), 0, SND_FILENAME Or SND_NODEFAULT) = 0 Then
+        WarnEnterPing "Windows could not play the Enter ping."
+    End If
+    Exit Sub
+
+Failed:
+    WarnEnterPing "The Enter ping could not play: " & Err.Description
+
+End Sub
+
+Public Sub StartCorrectionHum()
+
+    Dim humPath As String
+
+    On Error GoTo Failed
+
+    humPath = Environ$("APPDATA") & "\LLMAutocorrect\" & CORRECTION_HUM_FILE
+    If Len(Dir$(humPath)) = 0 Then
+        WarnCorrectionHum "The correction hum file was not found at " & humPath & "."
+        Exit Sub
+    End If
+
+    If PlaySound(StrPtr(humPath), 0, _
+        SND_FILENAME Or SND_ASYNC Or SND_LOOP Or SND_NODEFAULT) = 0 Then
+        WarnCorrectionHum "Windows could not start the correction hum."
+        Exit Sub
+    End If
+
+    mCorrectionHumPlaying = True
+    Exit Sub
+
+Failed:
+    WarnCorrectionHum "The correction hum could not start: " & Err.Description
+
+End Sub
+
+Public Sub StopCorrectionHum()
+    If mCorrectionHumPlaying Then
+        PlaySound 0, 0, 0
+        mCorrectionHumPlaying = False
+    End If
+End Sub
+
+Private Sub WarnEnterPing(ByVal message As String)
+    If mEnterPingWarned Then Exit Sub
+    mEnterPingWarned = True
+    MsgBox message & vbCrLf & "Autocorrection will continue without the ping.", _
+        vbExclamation, "Enter sound"
+End Sub
+
+Private Sub WarnCorrectionHum(ByVal message As String)
+    If mCorrectionHumWarned Then Exit Sub
+    mCorrectionHumWarned = True
+    MsgBox message & vbCrLf & "Autocorrection will continue without the hum.", _
+        vbExclamation, "Correction sound"
+End Sub
+
+' quiet: swallow failures instead of showing a dialog (used for the short mode-change notices).
+' cached: for fixed phrases (the mode notices). The audio is saved under %APPDATA%\LLMAutocorrect\cache the
+' first time, then played from disk with no request, and playback does not block, so pressing the
+' mode key quickly never waits on the voice.
+Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
+    Optional ByVal cached As Boolean = False)
 
     Dim apiKey As String
     Dim voiceId As String
@@ -29,13 +109,14 @@ Public Sub SpeakCorrectedText(ByVal text As String)
     Dim responseText As String
     Dim errorNumber As Long
     Dim errorDescription As String
+    Dim cachePath As String
 
     If Len(Trim$(text)) = 0 Then Exit Sub
 
     apiKey = ConfigValue("ELEVENLABS_API_KEY")
     voiceId = ConfigValue("ELEVENLABS_VOICE_ID")
     If Len(apiKey) = 0 Or Len(voiceId) = 0 Then
-        If Not mSpeechConfigWarned Then
+        If Not mSpeechConfigWarned And Not quiet Then
             MsgBox "ElevenLabs speech is not configured. Add ELEVENLABS_API_KEY and " & _
                 "ELEVENLABS_VOICE_ID to " & ConfigPath() & " and press Enter again.", _
                 vbInformation, "ElevenLabs speech"
@@ -45,6 +126,14 @@ Public Sub SpeakCorrectedText(ByVal text As String)
     End If
 
     On Error GoTo Failed
+
+    If cached Then
+        cachePath = NoticeCachePath(voiceId, text)
+        If Len(Dir$(cachePath)) > 0 Then
+            PlaySound StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT
+            Exit Sub
+        End If
+    End If
 
     requestBody = "{""text"":""" & JsonEscape(text) & """," & _
         """model_id"":""" & SPEECH_MODEL & """}"
@@ -60,7 +149,8 @@ Public Sub SpeakCorrectedText(ByVal text As String)
     statusCode = request.Status
     If statusCode < 200 Or statusCode >= 300 Then
         responseText = request.ResponseText
-        Err.Raise vbObjectError + 2100, "SpeakCorrectedText", _
+        RememberHttp statusCode, responseText
+        Err.Raise ERR_HTTP, "SpeakCorrectedText", _
             "ElevenLabs returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
             Left$(responseText, 1500)
     End If
@@ -73,6 +163,15 @@ Public Sub SpeakCorrectedText(ByVal text As String)
     If UBound(audio) < LBound(audio) Then
         Err.Raise vbObjectError + 2101, "SpeakCorrectedText", _
             "ElevenLabs returned no audio data."
+    End If
+
+    If cached Then
+        SaveAudioFile audio, cachePath
+        If PlaySound(StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
+            Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
+                "Windows could not start audio playback."
+        End If
+        Exit Sub
     End If
 
     StopAndRemovePreviousAudio
@@ -89,10 +188,9 @@ Failed:
     On Error Resume Next
     StopAndRemovePreviousAudio
     On Error GoTo 0
-    If errorNumber = ERR_CANCELLED Then Exit Sub
-    MsgBox "ElevenLabs speech failed." & vbCrLf & _
-        "Error " & CStr(errorNumber) & ": " & errorDescription, _
-        vbExclamation, "ElevenLabs speech"
+    If errorNumber = ERR_CANCELLED Then Exit Sub         ' Esc pressed
+    If quiet Then Exit Sub
+    ReportApiFailure "ElevenLabs", SPEECH_MODEL, errorNumber, errorDescription, 0, "Narration was skipped."
 
 End Sub
 
@@ -104,6 +202,7 @@ End Sub
 Private Sub StopAndRemovePreviousAudio()
 
     PlaySound 0, 0, 0
+    mCorrectionHumPlaying = False
     If Len(mAudioPath) > 0 Then
         If Len(Dir$(mAudioPath)) > 0 Then Kill mAudioPath
         mAudioPath = ""
@@ -111,16 +210,43 @@ Private Sub StopAndRemovePreviousAudio()
 
 End Sub
 
-Private Function SaveAudioFile(ByVal audio As Variant) As String
+' Where the audio for a fixed phrase is kept. The voice, speech model and wording are in the name, so
+' changing any of them makes a new clip instead of playing a stale one.
+Private Function NoticeCachePath(ByVal voiceId As String, ByVal text As String) As String
+
+    Dim folder As String
+    Dim i As Long
+    Dim c As String
+    Dim slug As String
+
+    folder = Environ$("APPDATA") & "\LLMAutocorrect\cache"
+    On Error Resume Next
+    MkDir folder
+    On Error GoTo 0
+
+    For i = 1 To Len(text)
+        c = Mid$(text, i, 1)
+        If c Like "[A-Za-z0-9]" Then slug = slug & c Else slug = slug & "_"
+    Next i
+
+    NoticeCachePath = folder & "\" & voiceId & "_" & SPEECH_MODEL & "_" & slug & ".wav"
+
+End Function
+
+' Saves the audio to path, or to a new temp file when path is empty. Returns the path used.
+Private Function SaveAudioFile(ByVal audio As Variant, Optional ByVal path As String = "") As String
 
     Dim fileName As String
     Dim stream As Object
     Dim fileSystem As Object
 
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
-    fileName = fileSystem.GetTempName
-    fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
-    SaveAudioFile = Environ$("TEMP") & "\" & fileName
+    If Len(path) = 0 Then
+        Set fileSystem = CreateObject("Scripting.FileSystemObject")
+        fileName = fileSystem.GetTempName
+        fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
+        path = Environ$("TEMP") & "\" & fileName
+    End If
+    SaveAudioFile = path
 
     Set stream = CreateObject("ADODB.Stream")
     stream.Type = 1

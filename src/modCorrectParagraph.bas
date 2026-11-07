@@ -5,14 +5,16 @@ Option Explicit
 ' paragraph comes back, and only the part that actually changed is written into the document,
 ' so formatting outside the edit survives. Bound to Enter by scripts/Build-Template.ps1.
 '
-' TO CHANGE MODEL: edit MODEL_NAME below. The provider (endpoint + which config.ini key to use)
+' TO CHANGE MODEL: set GEMINI_MODEL in config.ini (the 'Change LLM Autocorrect Keys' shortcut does
+' this), or edit MODEL_NAME below, which is the default. The provider (endpoint + which config.ini key to use)
 ' is worked out from the name in ResolveProvider. TO CHANGE PROMPT: edit SYSTEM_PROMPT and, if
 ' the prompt expects it, BuildUserMessage / StripTextTags.
 '
 ' Reuses the JSON helpers in modAutocorrect (Anthony's token-based OpenAI version, which is
 ' kept but no longer bound to a key).
 
-Private Const MODEL_NAME As String = "gemini-3-flash-preview"
+Private Const MODEL_NAME As String = "gemini-3-flash-preview"   ' default; GEMINI_MODEL in config.ini overrides it
+Private Const REASONING_DEFAULT As String = "minimal"           ' default; GEMINI_REASONING in config.ini overrides it
 
 Private Const SYSTEM_PROMPT As String = _
     "Fix the typing errors in the text inside <text></text>. " & _
@@ -25,6 +27,8 @@ Private Const MAX_CHANGE_RATIO As Double = 0.3 ' reject replies whose length dif
 Private Const MAX_CHANGE_SLACK As Long = 10    ' ...plus this many characters, for short paragraphs
 
 Private mPromptedKeys As Object                ' keys typed into the fallback prompt, by config name
+Private mHandled As Object                     ' paragraph texts already corrected (or judged fine) this session
+Private Const MAX_HANDLED As Long = 300
 
 Public Sub EnterAndCorrectParagraph()
 
@@ -33,11 +37,23 @@ Public Sub EnterAndCorrectParagraph()
     Dim endOfParagraph As Range
     Dim finalParagraph As Range
     Dim shouldSpeak As Boolean
+    Dim mode As Long
+    Dim t0 As Double
+    Dim t As Double
 
-    If Selection.Type <> wdSelectionIP Then
+    t0 = NowMs()
+    t = t0
+    mode = CurrentMode()        ' Off, or no Gemini key: nothing is called, Enter only types
+    LogLine "ENTER start: mode=" & mode & " docEnd=" & ActiveDocument.Content.End & _
+        " currentMode=" & SinceMs(t) & "ms"
+    If mode = MODE_OFF Or Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph
+        ShowModeStatus
+        LogLine "ENTER off/selection: total=" & SinceMs(t0) & "ms"
         Exit Sub
     End If
+
+    PlayEnterPing
 
     WaitForEscRelease
 
@@ -46,20 +62,41 @@ Public Sub EnterAndCorrectParagraph()
     Set target = para.Duplicate
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
-    shouldSpeak = CorrectRange(target)
+    t = NowMs()
+    If AlreadyHandled(target.Text) Then
+        ' Unchanged since the last pass: Enter just types, with no request and no narration.
+        shouldSpeak = False
+        LogLine "ENTER unchanged since last pass: skipped"
+    Else
+        shouldSpeak = CorrectRange(target)
+        LogLine "ENTER correctRange=" & SinceMs(t) & "ms"
+    End If
 
+    t = NowMs()
     Set endOfParagraph = para.Duplicate
     endOfParagraph.MoveEnd wdCharacter, -1
     endOfParagraph.Collapse wdCollapseEnd
     endOfParagraph.Select
+    LogLine "ENTER select=" & SinceMs(t) & "ms"
 
+    t = NowMs()
     Selection.TypeParagraph
+    LogLine "ENTER typeParagraph=" & SinceMs(t) & "ms"
 
-    If shouldSpeak Then
+    t = NowMs()
+    ShowModeStatus
+    LogLine "ENTER showModeStatus=" & SinceMs(t) & "ms"
+
+    ' Narrate mode only; CurrentMode already requires the ElevenLabs key and voice ID.
+    If shouldSpeak And mode = MODE_NARRATE Then
         Set finalParagraph = target.Document.Range(target.Start, target.Start).Paragraphs(1).Range
         finalParagraph.MoveEnd wdCharacter, -1
+        t = NowMs()
         SpeakCorrectedText finalParagraph.Text
+        LogLine "ENTER speak=" & SinceMs(t) & "ms"
     End If
+
+    LogLine "ENTER done: total=" & SinceMs(t0) & "ms"
 
 End Sub
 
@@ -70,6 +107,10 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     Dim lead As String
     Dim trail As String
     Dim stage As String
+    Dim t As Double
+    Dim elapsedMs As Long
+    Dim errNumber As Long
+    Dim errDescription As String
 
     On Error GoTo Failed
 
@@ -79,8 +120,10 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         Exit Function
     End If
 
-    stage = "contacting " & MODEL_NAME
+    stage = "contacting " & ActiveModel()
+    t = NowMs()
     fixed = RequestCorrection(original)
+    LogLine "  request " & ActiveModel() & " (" & Len(original) & " chars)=" & SinceMs(t) & "ms"
 
     stage = "checking the reply"
     fixed = StripTextTags(fixed)
@@ -90,28 +133,66 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     fixed = lead & Trim$(fixed) & trail
 
     If StrComp(fixed, original, vbBinaryCompare) = 0 Then
+        RememberHandled original
         CorrectRange = True
         Exit Function
     End If
     If Not ReplyLooksSane(original, fixed) Then
-        MsgBox MODEL_NAME & "'s reply changed the text too much, so it was not applied.", _
-            vbExclamation, "Autocorrection"
+        ' Skipped silently; the log keeps what was sent and what came back, to tune the check.
+        LogLine "  SKIPPED reply that changed the text too much (" & Len(original) & " -> " & Len(fixed) & _
+            " chars): original=[" & Left$(original, 200) & "] reply=[" & Left$(fixed, 200) & "]"
+        RememberHandled original
         CorrectRange = True
         Exit Function
     End If
 
     stage = "applying the correction"
+    t = NowMs()
     ApplyDiff target, original, fixed
+    LogLine "  applyDiff=" & SinceMs(t) & "ms"
+    RememberHandled original      ' so undoing the correction is not corrected again
+    RememberHandled fixed
     CorrectRange = True
     Exit Function
 
 Failed:
-    If Err.Number = ERR_CANCELLED Then CorrectRange = False: Exit Function   ' in CorrectRange
-    ' (in SpeakCorrectedText:  If Err.Number = ERR_CANCELLED Then Exit Sub)
-    MsgBox "Paragraph correction failed while " & stage & "." & vbCrLf & _
-        "Error " & CStr(Err.Number) & ": " & Err.Description, _
-        vbExclamation, "Autocorrection"
+    errNumber = Err.Number
+    errDescription = Err.Description
+    If errNumber = ERR_CANCELLED Then Exit Function      ' Esc pressed: leave the text as typed, no dialog
+    If Left$(stage, 10) = "contacting" Then
+        elapsedMs = SinceMs(t)
+        LogLine "  FAILED while " & stage & " (after " & elapsedMs & " ms): " & errNumber & " " & errDescription
+        ReportApiFailure ProviderName(ActiveModel()), ActiveModel(), errNumber, errDescription, elapsedMs, "Your text was left as typed."
+    Else
+        LogLine "  FAILED while " & stage & ": " & errNumber & " " & errDescription
+        ReportEditFailure ProviderName(ActiveModel()), stage, errNumber, errDescription
+    End If
 
+End Function
+
+' True if this exact paragraph text was already sent and settled earlier in this Word session, so
+' pressing Enter on a line that has not changed does not call the model again. A failed request is not
+' remembered, so it can be retried.
+Private Function AlreadyHandled(ByVal text As String) As Boolean
+    If mHandled Is Nothing Then Exit Function
+    AlreadyHandled = mHandled.Exists(text)
+End Function
+
+Private Sub RememberHandled(ByVal text As String)
+
+    If mHandled Is Nothing Then
+        Set mHandled = CreateObject("Scripting.Dictionary")
+        mHandled.CompareMode = 0            ' binary: case and spacing matter
+    End If
+    If mHandled.Count >= MAX_HANDLED Then mHandled.RemoveAll
+    mHandled(text) = True
+
+End Sub
+
+' The model in use: GEMINI_MODEL from config.ini (re-read each call, so a change applies at once),
+' otherwise MODEL_NAME.
+Private Function ActiveModel() As String
+    ActiveModel = ConfigValue("GEMINI_MODEL", MODEL_NAME)
 End Function
 
 ' What the user message looks like. Keep in step with SYSTEM_PROMPT.
@@ -228,40 +309,61 @@ Private Function GetApiKey(ByVal keyName As String) As String
 
 End Function
 
-' Sends only model and messages: options such as temperature and max_tokens are rejected or
-' behave differently on some models, so leaving them out keeps the model name freely swappable.
+' Sends the model and messages, plus reasoning_effort for Gemini. Options such as temperature and
+' max_tokens are rejected or behave differently on some models, so leaving them out keeps the model
+' name freely swappable.
 Private Function RequestCorrection(ByVal paragraphText As String) As String
 
     Dim apiUrl As String
     Dim keyName As String
     Dim apiKey As String
     Dim requestBody As String
+    Dim reasoning As String
+    Dim model As String
     Dim responseBody As String
     Dim choicesPosition As Long
     Dim request As Object
+    Dim t As Double
+    Dim errorNumber As Long
+    Dim errorSource As String
+    Dim errorDescription As String
 
-    ResolveProvider MODEL_NAME, apiUrl, keyName
+    On Error GoTo Failed
+
+    model = ActiveModel()
+    ResolveProvider model, apiUrl, keyName
     apiKey = GetApiKey(keyName)
     If Len(apiKey) = 0 Then
-        Err.Raise vbObjectError + 2000, "RequestCorrection", _
-            "No API key was entered. Run the macro again and enter your key (" & keyName & ")."
+        Err.Raise ERR_NO_KEY, "RequestCorrection", "No API key is saved (" & keyName & ")."
     End If
 
-    requestBody = "{""model"":""" & JsonEscape(MODEL_NAME) & """," & _
+    ' Gemini models think before answering, which is wasted time on a spelling fix: "minimal" cut
+    ' requests from about 2 s to under 1 s in testing. Other models may reject the field, so it is
+    ' sent to Gemini only.
+    If Left$(LCase$(model), 6) = "gemini" Then
+        reasoning = """reasoning_effort"":""" & JsonEscape(ConfigValue("GEMINI_REASONING", REASONING_DEFAULT)) & ""","
+    End If
+
+    requestBody = "{""model"":""" & JsonEscape(model) & """," & reasoning & _
         """messages"":[{""role"":""system"",""content"":""" & JsonEscape(SYSTEM_PROMPT) & """}," & _
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    request.Open "POST", apiUrl, True          ' True = asynchronous
-    request.SetTimeouts 5000, 5000, 20000, 60000
+    request.Open "POST", apiUrl, True          ' True = asynchronous, so Esc can cancel the wait
+    request.SetTimeouts 5000, 10000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
-    SendCancellable request, ToUtf8(requestBody)
+    t = NowMs()
+    StartCorrectionHum
+    SendCancellable request, ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
+    StopCorrectionHum
+    LogLine "    http send=" & SinceMs(t) & "ms status=" & request.Status
 
     responseBody = FromUtf8(request.ResponseBody)
 
     If request.Status < 200 Or request.Status >= 300 Then
-        Err.Raise vbObjectError + 2001, "RequestCorrection", _
+        RememberHttp request.Status, responseBody
+        Err.Raise ERR_HTTP, "RequestCorrection", _
             "The API returned HTTP " & CStr(request.Status) & "." & vbCrLf & Left$(responseBody, 1000)
     End If
 
@@ -272,6 +374,15 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     End If
 
     RequestCorrection = JsonStringProperty(responseBody, "content", choicesPosition)
+    Exit Function
+
+Failed:
+    errorNumber = Err.Number
+    errorSource = Err.Source
+    errorDescription = Err.Description
+    StopCorrectionHum
+    On Error GoTo 0
+    Err.Raise errorNumber, errorSource, errorDescription
 
 End Function
 
