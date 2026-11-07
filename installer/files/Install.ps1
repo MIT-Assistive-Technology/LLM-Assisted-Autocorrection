@@ -79,6 +79,9 @@ if (-not (Test-Path $template)) {
 }
 Copy-Item $template (Join-Path $startup 'LLMAutocorrect.dotm') -Force
 Unblock-File (Join-Path $startup 'LLMAutocorrect.dotm')
+foreach ($sound in 'enter-ping.wav', 'correction-hum.wav') {
+    Copy-Item (Join-Path $here $sound) $appDir -Force
+}
 foreach ($f in 'Update.ps1', 'Test-Keys.ps1', 'Set-Keys.ps1') { Copy-Item (Join-Path $here $f) $appDir -Force }
 $versionFile = Join-Path $here 'VERSION'
 if (-not (Test-Path $versionFile)) {

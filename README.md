@@ -1,6 +1,6 @@
 # LLM-Assisted-Autocorrection
 
-A Microsoft Word macro for Windows. When you press **Enter**, the paragraph you just finished is sent to an LLM (default: Google `gemini-3-flash-preview`; the model is a single constant, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)), the corrected text is written back in place, and (when configured) read aloud by ElevenLabs before the new line is inserted.
+A Microsoft Word macro for Windows. When you press **Enter**, a short two-tone ping confirms the key press, then the paragraph you just finished is sent to an LLM (default: Google `gemini-3-flash-preview`; the model is a single constant, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)) while a low hum plays. The corrected text is written back in place, and (when configured) read aloud by ElevenLabs.
 
 ## Install (end users)
 

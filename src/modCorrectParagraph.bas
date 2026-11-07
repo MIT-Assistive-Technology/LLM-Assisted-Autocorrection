@@ -53,6 +53,8 @@ Public Sub EnterAndCorrectParagraph()
         Exit Sub
     End If
 
+    PlayEnterPing
+
     WaitForEscRelease
 
     ' A Range follows later edits, so para is still correct after the text changes length.
@@ -322,6 +324,11 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     Dim choicesPosition As Long
     Dim request As Object
     Dim t As Double
+    Dim errorNumber As Long
+    Dim errorSource As String
+    Dim errorDescription As String
+
+    On Error GoTo Failed
 
     model = ActiveModel()
     ResolveProvider model, apiUrl, keyName
@@ -347,7 +354,9 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
     t = NowMs()
+    StartCorrectionHum
     SendCancellable request, ToUtf8(requestBody)     ' bytes, so curly quotes and accents survive
+    StopCorrectionHum
     LogLine "    http send=" & SinceMs(t) & "ms status=" & request.Status
 
     responseBody = FromUtf8(request.ResponseBody)
@@ -365,6 +374,15 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     End If
 
     RequestCorrection = JsonStringProperty(responseBody, "content", choicesPosition)
+    Exit Function
+
+Failed:
+    errorNumber = Err.Number
+    errorSource = Err.Source
+    errorDescription = Err.Description
+    StopCorrectionHum
+    On Error GoTo 0
+    Err.Raise errorNumber, errorSource, errorDescription
 
 End Function
 

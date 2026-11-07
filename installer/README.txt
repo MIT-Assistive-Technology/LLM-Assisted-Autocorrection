@@ -14,6 +14,9 @@ Install (about 2 minutes)
    for installation; speech stays disabled unless both are configured.
 5. Wait for "Done!". Open Word, type a line, and press Enter at the end of a line.
 
+Word plays a short two-tone ping when Enter is received and a low hum while it waits for
+the correction service. Both sounds are included; no audio files are needed from you.
+
 If Windows shows a blue "protected your PC" box, click "More info", then "Run anyway".
 
 Updates
