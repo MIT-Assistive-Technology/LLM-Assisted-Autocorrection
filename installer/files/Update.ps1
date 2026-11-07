@@ -56,7 +56,7 @@ function Run-Update {
         Move-Item "$dest.new" $dest -Force
         Unblock-File $dest
 
-        foreach ($f in 'Test-Keys.ps1', 'VERSION', 'Update.ps1') {   # Update.ps1 last: it is the running script
+        foreach ($f in 'Test-Keys.ps1', 'VERSION', 'enter-ping.wav', 'correction-hum.wav', 'Update.ps1') {   # Update.ps1 last: it is the running script
             Copy-Item (Join-Path $src $f) $appDir -Force
         }
         Say "Updated v$installed -> v$latest."

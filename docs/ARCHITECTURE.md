@@ -4,12 +4,13 @@
 
 `EnterAndCorrectParagraph` runs on every Enter. The key is bound in `scripts/Build-Template.ps1` (`$triggerKey` / `$triggerModifier`; the comments there say how to use another key; Shift + backtick did not dispatch in testing). With a plain caret it:
 
-1. takes the paragraph the caret is in (minus its mark) and skips it if shorter than 2 characters,
-2. sends the whole paragraph, wrapped in `<text></text>`, to the configured model and gets the corrected paragraph back (a stray `<text>` wrapper in the reply is stripped),
-3. restores the original leading/trailing spaces and rejects the reply if it is empty, contains line breaks the original did not, or differs in length by more than 30% (+10 characters),
-4. trims the start and end the two texts share and rewrites only the span in between through a `Range`, so formatting elsewhere in the paragraph is kept (if the paragraph contains fields or shapes, it falls back to replacing the whole paragraph),
-5. moves the caret to the end of the paragraph and inserts the new paragraph, allowing Word's own Enter-triggered processing to finish,
-6. reads the final text from the completed paragraph and plays it to completion when speech credentials are configured.
+1. plays a short two-tone WAV ping immediately when Enter is received,
+2. takes the paragraph the caret is in (minus its mark) and skips sending it if shorter than 2 characters,
+3. starts a looping hum immediately before sending the whole paragraph, wrapped in `<text></text>`, to the configured model; the hum stops as soon as the response arrives (or the request errors or is cancelled),
+4. strips a stray `<text>` wrapper from the reply, restores the original leading/trailing spaces and rejects the reply if it is empty, contains line breaks the original did not, or differs in length by more than 30% (+10 characters),
+5. trims the start and end the two texts share and rewrites only the span in between through a `Range`, so formatting elsewhere in the paragraph is kept (if the paragraph contains fields or shapes, it falls back to replacing the whole paragraph),
+6. moves the caret to the end of the paragraph and inserts the new paragraph, allowing Word's own Enter-triggered processing to finish,
+7. reads the final text from the completed paragraph and starts speech playback when speech credentials are configured.
 
 With a selection, Enter just inserts a paragraph. Errors are reported in a message box. The prompt is the `SYSTEM_PROMPT` constant and the model is the `MODEL_NAME` constant, both at the top of the module.
 
@@ -27,7 +28,8 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - The template lives in Word's STARTUP folder, so it loads with every Word session. The key binding is stored inside the template.
 - `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer asks for the Gemini key (required, since the default model is a Gemini model) and writes it there; a key for another provider, such as `OPENAI_API_KEY=...`, can be added to the file by hand; the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
 - The STARTUP `.dotm` is a generated, per-user installed copy; it is not the editable source. To update VBA behavior, change `src/*.bas`, build with `scripts\Build-Template.ps1`, and install the result with `installer\Install.cmd` or `scripts\Release.ps1 -NoPublish` followed by the bundled installer. Each user configures their own API keys and voice ID during installation or in their own `%APPDATA%\LLMAutocorrect\config.ini`; these values never enter the shared template or ZIP.
-- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are optional. The installer offers prompts for both, and they can also be added to `config.ini` by hand. When both are set, each successfully processed paragraph is sent to ElevenLabs using `eleven_flash_v2_5` with WAV output after Word completes its Enter-triggered processing; Windows Multimedia plays the returned WAV synchronously from a temporary file. Word waits for playback to finish before continuing. The temporary WAV is removed after playback. Speech errors are reported without preventing Enter from inserting the next paragraph.
+- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are optional. The installer offers prompts for both, and they can also be added to `config.ini` by hand. When both are set, each successfully processed paragraph is sent to ElevenLabs using `eleven_flash_v2_5` with WAV output after Word completes its Enter-triggered processing; Windows Multimedia plays the returned WAV asynchronously from a temporary file. The temporary WAV is removed when playback is stopped or replaced. Speech errors are reported without preventing Enter from inserting the next paragraph.
+- The installer and updater place `enter-ping.wav` and `correction-hum.wav` in `%APPDATA%\LLMAutocorrect`. Windows Multimedia plays the ping synchronously and loops the hum asynchronously during the model request; no audio configuration or files from the user are required. If a sound file cannot be played, a warning is shown and autocorrection continues without that sound.
 - A scheduled task runs `Update.ps1` 30 s after each sign-in. It compares `VERSION` with the latest GitHub release, and if newer (and Word is closed) swaps in the new template. The repo is public, so no authentication is needed.
 
 ## Known limitations (v0.1)
