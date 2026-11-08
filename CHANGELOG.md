@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+- New: Enter plays a short confirmation ping, and a low hum plays while a correction is waiting on the model (it stops when the reply arrives). The hum stays off in Off mode.
+- New: Esc cancels a correction that is waiting on the model, and stops speech that is playing. The text is left as typed.
 - Pressing Enter on a paragraph that has not changed since it was last corrected no longer calls the model or reads it aloud. The list is kept per Word session.
 - In Correction + Narration mode, error messages are also read aloud (the details line is not). Failures after the reply arrives (unreadable reply, document would not take the edit) use the same plain wording as other errors.
 - A reply that changes the text too much is now skipped silently and recorded in debug.log, with no dialog.
