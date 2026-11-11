@@ -56,8 +56,17 @@ function Run-Update {
         Move-Item "$dest.new" $dest -Force
         Unblock-File $dest
 
-        foreach ($f in 'Test-Keys.ps1', 'VERSION', 'enter-ping.wav', 'correction-hum.wav', 'Update.ps1') {   # Update.ps1 last: it is the running script
+        foreach ($f in 'Test-Keys.ps1', 'Set-Keys.ps1', 'VERSION', 'enter-ping.wav', 'correction-hum.wav', 'Update.ps1') {   # Update.ps1 last: it is the running script
             Copy-Item (Join-Path $src $f) $appDir -Force
+        }
+
+        # Installs from before Set-Keys.ps1 existed have no shortcut for it yet.
+        $keysLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Change LLM Autocorrect Keys.lnk'
+        if (-not (Test-Path $keysLnk)) {
+            $s = (New-Object -ComObject WScript.Shell).CreateShortcut($keysLnk)
+            $s.TargetPath = 'powershell.exe'
+            $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $appDir 'Set-Keys.ps1')`""
+            $s.Save()
         }
         Say "Updated v$installed -> v$latest."
         return 0

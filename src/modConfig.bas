@@ -33,3 +33,15 @@ Public Function ConfigValue(ByVal name As String, Optional ByVal fallback As Str
 Fail:
     ConfigValue = fallback
 End Function
+
+' True when a Gemini key is saved. The correction model is a Gemini model, so without it
+' the automation does nothing.
+Public Function HasGeminiKey() As Boolean
+    HasGeminiKey = Len(ConfigValue("GEMINI_API_KEY")) > 0
+End Function
+
+' True when everything ElevenLabs speech needs is saved (key and voice ID).
+Public Function HasSpeechConfig() As Boolean
+    HasSpeechConfig = Len(ConfigValue("ELEVENLABS_API_KEY")) > 0 And _
+        Len(ConfigValue("ELEVENLABS_VOICE_ID")) > 0
+End Function

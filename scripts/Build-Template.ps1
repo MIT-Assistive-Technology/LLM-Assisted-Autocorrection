@@ -49,30 +49,30 @@ try {
     # own project. Use a unique name that also differs from the file name (LLMAutocorrect.dotm).
     $proj.Name = 'AutocorrectMacros'
 
-    Get-ChildItem (Join-Path $repo 'src') -Filter *.bas | ForEach-Object {
+    Get-ChildItem (Join-Path $repo 'src') | Where-Object { $_.Extension -in '.bas', '.cls' } | ForEach-Object {
         Write-Host "Importing $($_.Name)..."
         Import-Module-Source $proj $_.FullName
     }
 
-    # Bind the trigger key inside the template itself, so the binding travels with the .dotm and is
+    # Bind the keys inside the template itself, so the bindings travel with the .dotm and are
     # active whenever the template is loaded from Word's STARTUP folder.
-    # Trigger: Enter. To use another key instead, change $triggerKey / $triggerModifier (for example
-    # 192 = the ` key, with 256 = Shift for tilde). Note that Shift + ` did not dispatch in testing.
     $wdKeyCategoryMacro = 2
-    $triggerKey = 13         # wdKeyReturn (192 = wdKeyBackSingleQuote, the ` ~ key)
-    $triggerModifier = 0     # 0 = none, 256 = wdKeyShift
-    Write-Host 'Binding Enter...'
+    $bindings = @(
+        @{ Key = 13;  Modifier = 0; Macro = 'modCorrectParagraph.EnterAndCorrectParagraph'; Name = 'Enter' },
+        @{ Key = 192; Modifier = 0; Macro = 'modMode.CycleMode'; Name = 'backtick' },
+        @{ Key = 27;  Modifier = 0; Macro = 'modCorrectParagraph.CancelPendingWork'; Name = 'Esc' }
+    )
     $word.CustomizationContext = $doc
-    # BuildKeyCode(modifier, key): modifiers come first, the key last; later arguments are by reference.
-    if ($triggerModifier) { $keyArg = [int]$triggerKey; $code = $word.BuildKeyCode([int]$triggerModifier, [ref]$keyArg) }
-    else { $code = $word.BuildKeyCode([int]$triggerKey) }
-    # Use the bare "module.macro" name: Word resolves it to the real macro and records it in the file's
-    # macro table. A project-qualified name is stored in the key map but never resolved, so the table
-    # stays empty and the key does nothing.
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.EnterAndCorrectParagraph', $code)
-
-    $escCode = $word.BuildKeyCode(27)    # wdKeyEscape
-    [void]$word.KeyBindings.Add($wdKeyCategoryMacro, 'modCorrectParagraph.CancelPendingWork', $escCode)
+    foreach ($b in $bindings) {
+        Write-Host "Binding $($b.Name)..."
+        # BuildKeyCode(modifier, key): modifiers come first, the key last; later arguments are by reference.
+        if ($b.Modifier) { $keyArg = [int]$b.Key; $code = $word.BuildKeyCode([int]$b.Modifier, [ref]$keyArg) }
+        else { $code = $word.BuildKeyCode([int]$b.Key) }
+        # Use the bare "module.macro" name: Word resolves it to the real macro and records it in the file's
+        # macro table. A project-qualified name is stored in the key map but never resolved, so the table
+        # stays empty and the key does nothing.
+        [void]$word.KeyBindings.Add($wdKeyCategoryMacro, $b.Macro, $code)
+    }
 
     Write-Host 'Saving template...'
     if (Test-Path $out) { Remove-Item $out -Force }
@@ -89,14 +89,18 @@ try {
         $keymap = Read-Part 'word/customizations.xml'
         $table  = Read-Part 'word/vbaData.xml'
     } finally { $zip.Dispose() }
-    $bound = [regex]::Match($keymap, 'wne:macroName="([^"]+)"')
-    if (-not $bound.Success) { Remove-Item $out -Force; throw 'Build check failed: the file has no key binding.' }
-    if ($table -notmatch ('wne:macroName="' + [regex]::Escape($bound.Groups[1].Value) + '"')) {
-        Remove-Item $out -Force
-        throw ("Build check failed: the key is bound to $($bound.Groups[1].Value) but the file's macro table does not list it, " +
-               'so the key would do nothing. Close Word, uninstall any installed copy, and rebuild.')
+    $bound = [regex]::Matches($keymap, 'wne:macroName="([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
+    foreach ($b in $bindings) {
+        # Word may record the name with or without a project prefix; take the name it wrote to the key map.
+        $recorded = $bound | Where-Object { $_ -ieq $b.Macro -or $_.EndsWith('.' + $b.Macro, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+        if (-not $recorded) { Remove-Item $out -Force; throw "Build check failed: the file has no key binding for $($b.Macro) (key map has: $($bound -join ', '))." }
+        if ($table -notmatch ('(?i)wne:macroName="' + [regex]::Escape($recorded) + '"')) {
+            Remove-Item $out -Force
+            throw ("Build check failed: the key is bound to $recorded but the file's macro table does not list it, " +
+                   'so the key would do nothing. Close Word, uninstall any installed copy, and rebuild.')
+        }
     }
-    Write-Host "Build check passed: key bound to $($bound.Groups[1].Value)"
+    Write-Host "Build check passed: keys bound to $($bound -join ', ')"
     Write-Host "Built $out"
 }
 finally {

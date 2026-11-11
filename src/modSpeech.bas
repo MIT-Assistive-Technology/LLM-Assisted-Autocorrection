@@ -25,6 +25,9 @@ Private mCorrectionHumPlaying As Boolean
 Private mCorrectionHumWarned As Boolean
 Private mSpeechQueue As Collection
 Private mSpeechRequest As Object
+Private mSpeechRequestQuiet As Boolean
+Private mSpeechRequestCached As Boolean
+Private mSpeechCachePath As String
 Private mPlaybackEndsAt As Date
 Private mPlaybackActive As Boolean
 
@@ -112,17 +115,21 @@ Private Sub WarnCorrectionHum(ByVal message As String)
 
 End Sub
 
-Public Sub SpeakCorrectedText(ByVal text As String)
+Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
+    Optional ByVal cached As Boolean = False)
 
     Dim apiKey As String
     Dim voiceId As String
+    Dim cachePath As String
+    Dim item As Object
+    Dim audioDuration As Double
 
     If Len(Trim$(text)) = 0 Then Exit Sub
 
     apiKey = ConfigValue("ELEVENLABS_API_KEY")
     voiceId = ConfigValue("ELEVENLABS_VOICE_ID")
     If Len(apiKey) = 0 Or Len(voiceId) = 0 Then
-        If Not mSpeechConfigWarned Then
+        If Not mSpeechConfigWarned And Not quiet Then
             MsgBox "ElevenLabs speech is not configured. Add ELEVENLABS_API_KEY and " & _
                 "ELEVENLABS_VOICE_ID to " & ConfigPath() & " and press Enter again.", _
                 vbInformation, "ElevenLabs speech"
@@ -131,8 +138,31 @@ Public Sub SpeakCorrectedText(ByVal text As String)
         Exit Sub
     End If
 
+    If cached Then
+        cachePath = NoticeCachePath(voiceId, text)
+        If Len(Dir$(cachePath)) > 0 Then
+            StopCorrectionHum
+            StopAndRemovePreviousAudio
+            If PlaySound(StrPtr(cachePath), 0, _
+                SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
+                Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
+                    "Windows could not start cached mode narration."
+            End If
+            audioDuration = (FileLen(cachePath) - 44) / 48000#
+            If audioDuration < 0.25 Then audioDuration = 0.25
+            mPlaybackEndsAt = Now + audioDuration / 86400#
+            mPlaybackActive = True
+            Exit Sub
+        End If
+    End If
+
     If mSpeechQueue Is Nothing Then Set mSpeechQueue = New Collection
-    mSpeechQueue.Add text
+    Set item = CreateObject("Scripting.Dictionary")
+    item.Add "Text", text
+    item.Add "Quiet", quiet
+    item.Add "Cached", cached
+    item.Add "CachePath", cachePath
+    mSpeechQueue.Add item
     StartNextSpeechRequest apiKey, voiceId
 
 End Sub
@@ -165,7 +195,8 @@ Public Function PollSpeechRequest() As Boolean
         statusCode = request.Status
         If statusCode < 200 Or statusCode >= 300 Then
             responseText = request.ResponseText
-            Err.Raise vbObjectError + 2100, "PollSpeechRequest", _
+            RememberHttp statusCode, responseText
+            Err.Raise ERR_HTTP, "PollSpeechRequest", _
                 "ElevenLabs returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
                 Left$(responseText, 1500)
         End If
@@ -186,12 +217,22 @@ Public Function PollSpeechRequest() As Boolean
         End If
         If durationSeconds < 0.25 Then durationSeconds = 0.25
 
-        mAudioPath = SaveAudioFile(audio)
         StopCorrectionHum
-        If PlaySound(StrPtr(mAudioPath), 0, _
-            SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
-            Err.Raise vbObjectError + 2102, "PollSpeechRequest", _
-                "Windows could not start audio playback."
+        If mSpeechRequestCached Then
+            SaveAudioFile audio, mSpeechCachePath
+            mAudioPath = ""
+            If PlaySound(StrPtr(mSpeechCachePath), 0, _
+                SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
+                Err.Raise vbObjectError + 2102, "PollSpeechRequest", _
+                    "Windows could not start cached mode narration."
+            End If
+        Else
+            mAudioPath = SaveAudioFile(audio)
+            If PlaySound(StrPtr(mAudioPath), 0, _
+                SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
+                Err.Raise vbObjectError + 2102, "PollSpeechRequest", _
+                    "Windows could not start audio playback."
+            End If
         End If
         mPlaybackEndsAt = Now + durationSeconds / 86400#
         mPlaybackActive = True
@@ -209,13 +250,16 @@ Failed:
     Set mSpeechRequest = Nothing
     errorNumber = Err.Number
     errorDescription = Err.Description
+    If mSpeechRequestQuiet Then
+        PollSpeechRequest = SpeechRequestPending()
+        Exit Function
+    End If
     On Error Resume Next
     StopAndRemovePreviousAudio
     On Error GoTo 0
     mPlaybackActive = False
-    MsgBox "ElevenLabs speech failed." & vbCrLf & _
-        "Error " & CStr(errorNumber) & ": " & errorDescription, _
-        vbExclamation, "ElevenLabs speech"
+    ReportApiFailure "ElevenLabs", SPEECH_MODEL, errorNumber, errorDescription, _
+        0, "Correction was applied; narration could not be played."
     PollSpeechRequest = SpeechRequestPending()
 
 End Function
@@ -255,6 +299,7 @@ Private Sub StartNextSpeechRequest(ByVal apiKey As String, ByVal voiceId As Stri
 
     Dim request As Object
     Dim requestBody As String
+    Dim item As Object
 
     If mSpeechRequest Is Nothing And Not mPlaybackActive Then
         If mSpeechQueue Is Nothing Then Exit Sub
@@ -262,7 +307,8 @@ Private Sub StartNextSpeechRequest(ByVal apiKey As String, ByVal voiceId As Stri
         If Len(apiKey) = 0 Or Len(voiceId) = 0 Then Exit Sub
 
         On Error GoTo Failed
-        requestBody = "{""text"":""" & JsonEscape(CStr(mSpeechQueue(1))) & """," & _
+        Set item = mSpeechQueue(1)
+        requestBody = "{""text"":""" & JsonEscape(CStr(item("Text"))) & """," & _
             """model_id"":""" & SPEECH_MODEL & """}"
 
         Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
@@ -272,6 +318,9 @@ Private Sub StartNextSpeechRequest(ByVal apiKey As String, ByVal voiceId As Stri
         request.SetRequestHeader "Accept", "application/octet-stream"
         request.SetRequestHeader "xi-api-key", apiKey
         request.Send ToUtf8(requestBody)
+        mSpeechRequestQuiet = CBool(item("Quiet"))
+        mSpeechRequestCached = CBool(item("Cached"))
+        mSpeechCachePath = CStr(item("CachePath"))
         mSpeechQueue.Remove 1
         Set mSpeechRequest = request
         Exit Sub
@@ -279,9 +328,11 @@ Private Sub StartNextSpeechRequest(ByVal apiKey As String, ByVal voiceId As Stri
     Exit Sub
 
 Failed:
-    MsgBox "Could not start ElevenLabs speech." & vbCrLf & _
-        "Error " & CStr(Err.Number) & ": " & Err.Description, _
-        vbExclamation, "ElevenLabs speech"
+    Set item = mSpeechQueue(1)
+    If Not CBool(item("Quiet")) Then
+        ReportApiFailure "ElevenLabs", SPEECH_MODEL, Err.Number, Err.Description, _
+            0, "Correction was applied; narration could not be played."
+    End If
     If mSpeechQueue.Count > 0 Then mSpeechQueue.Remove 1
 
 End Sub
@@ -297,16 +348,58 @@ Private Sub StopAndRemovePreviousAudio()
 
 End Sub
 
-Private Function SaveAudioFile(ByVal audio As Variant) As String
+Private Function NoticeCachePath(ByVal voiceId As String, ByVal text As String) As String
+
+    Dim fileSystem As Object
+    Dim folder As String
+    Dim safeVoiceId As String
+    Dim fileName As String
+
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    folder = Environ$("APPDATA") & "\LLMAutocorrect\cache"
+    If Not fileSystem.FolderExists(folder) Then fileSystem.CreateFolder folder
+
+    safeVoiceId = voiceId
+    safeVoiceId = Replace(safeVoiceId, "\", "_")
+    safeVoiceId = Replace(safeVoiceId, "/", "_")
+    safeVoiceId = Replace(safeVoiceId, ":", "_")
+    safeVoiceId = Replace(safeVoiceId, "*", "_")
+    safeVoiceId = Replace(safeVoiceId, "?", "_")
+    safeVoiceId = Replace(safeVoiceId, """", "_")
+    safeVoiceId = Replace(safeVoiceId, "<", "_")
+    safeVoiceId = Replace(safeVoiceId, ">", "_")
+    safeVoiceId = Replace(safeVoiceId, "|", "_")
+
+    Select Case text
+        Case "Autocorrect, on."
+            fileName = "correction-on"
+        Case "Autocorrect and narration, on."
+            fileName = "narration-on"
+        Case "Autocorrect, off."
+            fileName = "automation-off"
+        Case Else
+            fileName = "notice"
+    End Select
+
+    NoticeCachePath = folder & "\" & safeVoiceId & "-" & fileName & ".wav"
+
+End Function
+
+Private Function SaveAudioFile(ByVal audio As Variant, _
+    Optional ByVal filePath As String = "") As String
 
     Dim fileName As String
     Dim stream As Object
     Dim fileSystem As Object
 
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
-    fileName = fileSystem.GetTempName
-    fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
-    SaveAudioFile = Environ$("TEMP") & "\" & fileName
+    If Len(filePath) > 0 Then
+        SaveAudioFile = filePath
+    Else
+        Set fileSystem = CreateObject("Scripting.FileSystemObject")
+        fileName = fileSystem.GetTempName
+        fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
+        SaveAudioFile = Environ$("TEMP") & "\" & fileName
+    End If
 
     Set stream = CreateObject("ADODB.Stream")
     stream.Type = 1

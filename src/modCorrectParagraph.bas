@@ -6,7 +6,8 @@ Option Explicit
 ' that actually changed is written into the document, so formatting outside the edit survives.
 ' Bound to Enter by scripts/Build-Template.ps1.
 '
-' TO CHANGE MODEL: edit MODEL_NAME below. The provider (endpoint + which config.ini key to use)
+' TO CHANGE MODEL: set GEMINI_MODEL in config.ini or edit MODEL_NAME below. Set
+' GEMINI_REASONING to override the default effort. The provider (endpoint + which config.ini key to use)
 ' is worked out from the name in ResolveProvider. TO CHANGE PROMPT: edit SYSTEM_PROMPT and, if
 ' the prompt expects it, BuildUserMessage / StripTextTags.
 '
@@ -14,6 +15,7 @@ Option Explicit
 ' kept but no longer bound to a key).
 
 Private Const MODEL_NAME As String = "gemini-3-flash-preview"
+Private Const REASONING_DEFAULT As String = "minimal"
 
 Private Const SYSTEM_PROMPT As String = _
     "Fix the typing errors in the text inside <text></text>. " & _
@@ -37,11 +39,21 @@ Public Sub EnterAndCorrectParagraph()
     Dim paragraphStart As Long
     Dim target As Range
     Dim paragraphText As String
+    Dim mode As Long
+    Dim model As String
+
+    mode = CurrentMode()
+    If mode = MODE_OFF Then
+        Selection.TypeParagraph
+        ShowModeStatus
+        Exit Sub
+    End If
 
     PlayEnterPing
 
     If Selection.Type <> wdSelectionIP Then
         Selection.TypeParagraph
+        ShowModeStatus
         Exit Sub
     End If
 
@@ -60,16 +72,19 @@ Public Sub EnterAndCorrectParagraph()
     End If
 
     If Len(Trim$(paragraphText)) >= MIN_CHARS Then
-        QueueCorrection target, paragraphText
+        model = ActiveModel()
+        QueueCorrection target, paragraphText, mode, model
     End If
 
+    ShowModeStatus
     If CorrectionQueuePending() Or SpeechRequestPending() Then
         SchedulePendingWorkPoll
     End If
 
 End Sub
 
-Private Sub QueueCorrection(ByVal target As Range, ByVal original As String)
+Private Sub QueueCorrection(ByVal target As Range, ByVal original As String, _
+    ByVal mode As Long, ByVal model As String)
 
     Dim job As Object
 
@@ -78,6 +93,8 @@ Private Sub QueueCorrection(ByVal target As Range, ByVal original As String)
     Set job = CreateObject("Scripting.Dictionary")
     job.Add "Target", target
     job.Add "Original", original
+    job.Add "Mode", mode
+    job.Add "Model", model
     mCorrectionQueue.Add job
 
     If mCorrectionQueue.Count = 1 Then StartNextCorrection
@@ -90,6 +107,7 @@ Private Sub StartNextCorrection()
     Dim request As Object
     Dim errorNumber As Long
     Dim errorDescription As String
+    Dim model As String
 
     If mCorrectionQueue Is Nothing Then Exit Sub
     If mCorrectionQueue.Count = 0 Then Exit Sub
@@ -98,7 +116,8 @@ Private Sub StartNextCorrection()
     If job.Exists("Request") Then Exit Sub
 
     On Error GoTo Failed
-    Set request = StartCorrectionRequest(CStr(job("Original")))
+    model = CStr(job("Model"))
+    Set request = StartCorrectionRequest(CStr(job("Original")), model)
     job.Add "Request", request
     StartCorrectionHum
     Exit Sub
@@ -107,14 +126,13 @@ Failed:
     errorNumber = Err.Number
     errorDescription = Err.Description
     StopCorrectionHum
-    MsgBox "Could not start paragraph correction." & vbCrLf & _
-        "Error " & CStr(errorNumber) & ": " & errorDescription, _
-        vbExclamation, "Autocorrection"
+    ReportApiFailure ProviderName(model), model, errorNumber, errorDescription, _
+        0, "Your text was left as typed."
     mCorrectionQueue.Remove 1
 
 End Sub
 
-Private Sub SchedulePendingWorkPoll()
+Public Sub SchedulePendingWorkPoll()
 
     If mPollScheduled Then Exit Sub
 
@@ -165,8 +183,11 @@ Public Sub PollPendingWork()
     Dim speechPending As Boolean
     Dim errorNumber As Long
     Dim errorDescription As String
+    Dim stage As String
+    Dim model As String
 
     mPollScheduled = False
+    ClearModeStatus
     speechPending = PollSpeechRequest()
 
     If Not mCorrectionQueue Is Nothing Then
@@ -174,16 +195,19 @@ Public Sub PollPendingWork()
             Set job = mCorrectionQueue(1)
             If job.Exists("Request") Then
                 Set request = job("Request")
+                model = CStr(job("Model"))
                 On Error GoTo RequestFailed
                 If request.WaitForResponse(0) Then
                     StopCorrectionHum
+                    stage = "checking the reply"
                     fixed = ReadCorrectionResponse(request)
                     Set target = job("Target")
                     original = CStr(job("Original"))
 
                     If StrComp(target.Text, original, vbBinaryCompare) = 0 Then
+                        stage = "applying the correction"
                         If ApplyCorrectionResult(target, original, fixed) Then
-                            SpeakCorrectedText fixed
+                            If CLng(job("Mode")) = MODE_NARRATE Then SpeakCorrectedText fixed
                         End If
                     Else
                         Application.StatusBar = _
@@ -209,9 +233,14 @@ RequestFailed:
     errorNumber = Err.Number
     errorDescription = Err.Description
     StopCorrectionHum
-    MsgBox "Paragraph correction failed." & vbCrLf & _
-        "Error " & CStr(errorNumber) & ": " & errorDescription, _
-        vbExclamation, "Autocorrection"
+    If stage = "checking the reply" And errorNumber <> ERR_HTTP Then
+        ReportEditFailure ProviderName(model), stage, errorNumber, errorDescription
+    ElseIf stage = "applying the correction" Then
+        ReportEditFailure ProviderName(model), stage, errorNumber, errorDescription
+    Else
+        ReportApiFailure ProviderName(model), model, errorNumber, errorDescription, _
+            0, "Your text was left as typed."
+    End If
     mCorrectionQueue.Remove 1
     If mCorrectionQueue.Count > 0 Then StartNextCorrection
     On Error GoTo 0
@@ -248,7 +277,7 @@ Private Function ApplyCorrectionResult(ByVal target As Range, _
     End If
     If Not ReplyLooksSane(original, fixed) Then
         Application.StatusBar = "Autocorrection reply was rejected; the paragraph was left unchanged."
-        MsgBox MODEL_NAME & "'s reply changed the text too much, so it was not applied.", _
+        MsgBox ActiveModel() & "'s reply changed the text too much, so it was not applied.", _
             vbExclamation, "Autocorrection"
         Exit Function
     End If
@@ -381,30 +410,44 @@ Private Function GetApiKey(ByVal keyName As String) As String
 
 End Function
 
-' Sends only model and messages: options such as temperature and max_tokens are rejected or
+' The saved setting overrides the default without requiring Word to restart.
+Private Function ActiveModel() As String
+
+    ActiveModel = ConfigValue("GEMINI_MODEL", MODEL_NAME)
+
+End Function
+
+' Sends model and messages, plus reasoning_effort for Gemini. Options such as temperature and max_tokens are rejected or
 ' behave differently on some models, so leaving them out keeps the model name freely swappable.
-Private Function StartCorrectionRequest(ByVal paragraphText As String) As Object
+Private Function StartCorrectionRequest(ByVal paragraphText As String, _
+    ByVal model As String) As Object
 
     Dim apiUrl As String
     Dim keyName As String
     Dim apiKey As String
     Dim requestBody As String
     Dim request As Object
+    Dim reasoning As String
 
-    ResolveProvider MODEL_NAME, apiUrl, keyName
+    ResolveProvider model, apiUrl, keyName
     apiKey = GetApiKey(keyName)
     If Len(apiKey) = 0 Then
-        Err.Raise vbObjectError + 2000, "StartCorrectionRequest", _
-            "No API key was entered. Run the macro again and enter your key (" & keyName & ")."
+        Err.Raise ERR_NO_KEY, "StartCorrectionRequest", _
+            "No API key is saved (" & keyName & ")."
     End If
 
-    requestBody = "{""model"":""" & JsonEscape(MODEL_NAME) & """," & _
+    If Left$(LCase$(model), 6) = "gemini" Then
+        reasoning = """reasoning_effort"":""" & _
+            JsonEscape(ConfigValue("GEMINI_REASONING", REASONING_DEFAULT)) & ""","
+    End If
+
+    requestBody = "{""model"":""" & JsonEscape(model) & """," & reasoning & _
         """messages"":[{""role"":""system"",""content"":""" & JsonEscape(SYSTEM_PROMPT) & """}," & _
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
     request.Open "POST", apiUrl, True
-    request.SetTimeouts 5000, 5000, 20000, 60000
+    request.SetTimeouts 5000, 10000, 20000, 60000
     request.SetRequestHeader "Content-Type", "application/json"
     request.SetRequestHeader "Authorization", "Bearer " & apiKey
     request.Send ToUtf8(requestBody)
@@ -420,7 +463,8 @@ Private Function ReadCorrectionResponse(ByVal request As Object) As String
     responseBody = FromUtf8(request.ResponseBody)
 
     If request.Status < 200 Or request.Status >= 300 Then
-        Err.Raise vbObjectError + 2001, "ReadCorrectionResponse", _
+        RememberHttp request.Status, responseBody
+        Err.Raise ERR_HTTP, "ReadCorrectionResponse", _
             "The API returned HTTP " & CStr(request.Status) & "." & vbCrLf & Left$(responseBody, 1000)
     End If
 
