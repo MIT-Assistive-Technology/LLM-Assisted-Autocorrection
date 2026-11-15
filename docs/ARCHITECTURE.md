@@ -40,6 +40,15 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - **Privacy.** Every finished paragraph goes to the model provider; when configured, it also goes to ElevenLabs for speech generation.
 - **Untested end-to-end** through the installer and updater.
 
+## Trace logging
+
+`src/modTrace.bas` records every pass of Enter that does work (paragraph, request and response bodies, checks, speech call) in memory, as `modLog.LogLine` and explicit `TraceBlock` calls fill it in. Two typed commands, handled first thing in `EnterAndCorrectParagraph` when the whole paragraph is exactly the marker (the marker line stays in the document and the model is not called):
+
+- `!!!` writes the previous pass's trace to the file.
+- `@@@` writes every pass's trace until `@@@` is typed again. It lives in memory only, so restarting Word turns it off. The status bar shows "Trace on" and the voice says "Trace on" / "Trace off". A successful `!!!` is spoken as "Logged trace." The installer (and `Update.ps1` for older installs) creates a desktop shortcut, "LLM Autocorrect Traces", to the traces folder.
+
+All traces for a document go to `%APPDATA%\LLMAutocorrect	races\<document name>.trace.log`, appended. Files are never deleted automatically, stop growing at 5 MB, and hold document text but never API keys. `TRACE_COMMANDS=off` in config.ini (only there; default `on`) disables both the commands and the recording. `debug.log` is unchanged and only holds timings.
+
 ## Speech configuration
 
 Add the following entries to `%APPDATA%\LLMAutocorrect\config.ini`, using your ElevenLabs API key and voice ID. Both are required to enable speech; blank values leave autocorrection working without speech:
@@ -50,3 +59,17 @@ ELEVENLABS_VOICE_ID=your_voice_id
 ```
 
 The key is sent in the `xi-api-key` request header. ElevenLabs receives the corrected paragraph text to synthesize it. Word waits for speech playback to finish.
+
+### Cartesia (alternative speech provider)
+
+ElevenLabs is the default. To use Cartesia instead, add:
+
+```ini
+TTS_PROVIDER=cartesia
+CARTESIA_API_KEY=your_api_key
+CARTESIA_VOICE_ID=your_voice_id
+; optional, default sonic-3.6
+CARTESIA_MODEL=sonic-3.6
+```
+
+Requests go to `POST https://api.cartesia.ai/tts/bytes` with `Authorization: Bearer <key>` and `Cartesia-Version: 2026-08-14` (`CARTESIA_VERSION` in `src/modSpeech.bas`), asking for 24 kHz 16-bit PCM WAV. Cartesia receives the corrected paragraph text. Cached mode announcements are kept per provider, voice and model. Provider selection lives in `SpeechProvider()` in `src/modConfig.bas`; any `TTS_PROVIDER` value other than `cartesia` means ElevenLabs.

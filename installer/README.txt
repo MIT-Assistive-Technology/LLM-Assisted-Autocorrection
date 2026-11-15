@@ -46,6 +46,11 @@ Good to know
 - When configured, the corrected paragraph is also sent to ElevenLabs to generate speech.
   To change the key or voice later, edit ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in
   %APPDATA%\LLMAutocorrect\config.ini. Changes apply immediately.
+- Trace logging: type !!! on a line of its own in Word and press Enter to save a full
+  trace of the previous line; type @@@ to save every line's trace until you type @@@ again.
+  Traces contain your document text. They are kept in the "LLM Autocorrect Traces" folder
+  (desktop shortcut), one file per document, and are never deleted automatically.
+  Add TRACE_COMMANDS=off to config.ini to turn this off.
 - If something goes wrong, a message box says why. Running Install.cmd again
   tests your key and lets you re-enter it.
 

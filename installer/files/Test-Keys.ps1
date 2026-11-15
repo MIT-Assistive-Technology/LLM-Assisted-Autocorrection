@@ -17,7 +17,9 @@ param(
 $providers = @(
     @{ Name = 'Gemini'; Key = 'GEMINI_API_KEY'; Header = 'Authorization'; Prefix = 'Bearer '; Url = 'https://generativelanguage.googleapis.com/v1beta/openai/models' },
     @{ Name = 'OpenAI'; Key = 'OPENAI_API_KEY'; Header = 'Authorization'; Prefix = 'Bearer '; Url = 'https://api.openai.com/v1/models' },
-    @{ Name = 'ElevenLabs'; Key = 'ELEVENLABS_API_KEY'; Header = 'xi-api-key'; Prefix = ''; Url = 'https://api.elevenlabs.io/v1/user' }
+    @{ Name = 'ElevenLabs'; Key = 'ELEVENLABS_API_KEY'; Header = 'xi-api-key'; Prefix = ''; Url = 'https://api.elevenlabs.io/v1/user' },
+    # Cartesia has no key-check endpoint; listing one voice needs a valid key. Version matches CARTESIA_VERSION in src/modSpeech.bas.
+    @{ Name = 'Cartesia'; Key = 'CARTESIA_API_KEY'; Header = 'Authorization'; Prefix = 'Bearer '; Url = 'https://api.cartesia.ai/voices?limit=1'; Extra = @{ 'Cartesia-Version' = '2026-08-14' } }
 )
 
 function Read-Ini($path) {
@@ -53,6 +55,7 @@ foreach ($p in $providers) {
     try {
         $headers = @{}
         $headers[$p.Header] = $p.Prefix + $key
+        if ($p.Extra) { foreach ($k in $p.Extra.Keys) { $headers[$k] = $p.Extra[$k] } }
         Invoke-WebRequest -Uri $p.Url -Headers $headers -UseBasicParsing -TimeoutSec 20 | Out-Null
         Write-Host "  [ OK ] $($p.Name) key"
     } catch {

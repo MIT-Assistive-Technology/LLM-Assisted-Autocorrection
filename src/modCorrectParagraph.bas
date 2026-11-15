@@ -27,8 +27,15 @@ Private Const MAX_CHANGE_RATIO As Double = 0.3 ' reject replies whose length dif
 Private Const MAX_CHANGE_SLACK As Long = 10    ' ...plus this many characters, for short paragraphs
 
 Private mPromptedKeys As Object                ' keys typed into the fallback prompt, by config name
-Private mHandled As Object                     ' paragraph texts already corrected (or judged fine) this session
+' Paragraphs already corrected (or judged fine) this Word session, so Enter on an unchanged earlier line
+' does not call the model again. A paragraph is remembered by where it is in the document (a Range, which
+' follows later edits) and by its text, so the same words typed on a new line are still corrected.
 Private Const MAX_HANDLED As Long = 300
+Private mHRange(1 To MAX_HANDLED) As Range
+Private mHText1(1 To MAX_HANDLED) As String    ' the text before the correction
+Private mHText2(1 To MAX_HANDLED) As String    ' and after it (equal when nothing changed)
+Private mHCount As Long
+Private mHNext As Long
 
 Public Sub EnterAndCorrectParagraph()
 
@@ -40,6 +47,12 @@ Public Sub EnterAndCorrectParagraph()
     Dim mode As Long
     Dim t0 As Double
     Dim t As Double
+
+    ' !!! or @@@ alone on the line is a trace command (modTrace): carry it out and just type the new line.
+    If TraceHandleCommand() Then
+        Selection.TypeParagraph
+        Exit Sub
+    End If
 
     t0 = NowMs()
     t = t0
@@ -62,11 +75,13 @@ Public Sub EnterAndCorrectParagraph()
     Set target = para.Duplicate
     target.MoveEnd wdCharacter, -1          ' leave the paragraph mark out
 
+    TraceBegin target.Text, mode
+
     t = NowMs()
-    If AlreadyHandled(target.Text) Then
+    If AlreadyHandled(target) Then
         ' Unchanged since the last pass: Enter just types, with no request and no narration.
         shouldSpeak = False
-        LogLine "ENTER unchanged since last pass: skipped"
+        LogLine "ENTER unchanged since last pass: skipped (no request, no narration)"
     Else
         shouldSpeak = CorrectRange(target)
         LogLine "ENTER correctRange=" & SinceMs(t) & "ms"
@@ -97,6 +112,7 @@ Public Sub EnterAndCorrectParagraph()
     End If
 
     LogLine "ENTER done: total=" & SinceMs(t0) & "ms"
+    TraceEnd
 
 End Sub
 
@@ -124,6 +140,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     t = NowMs()
     fixed = RequestCorrection(original)
     LogLine "  request " & ActiveModel() & " (" & Len(original) & " chars)=" & SinceMs(t) & "ms"
+    TraceBlock "Model reply (content, as received)", fixed
 
     stage = "checking the reply"
     fixed = StripTextTags(fixed)
@@ -131,9 +148,11 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     lead = Left$(original, Len(original) - Len(LTrim$(original)))
     trail = Right$(original, Len(original) - Len(RTrim$(original)))
     fixed = lead & Trim$(fixed) & trail
+    TraceBlock "Reply after cleanup (tags stripped, spacing restored)", fixed
 
     If StrComp(fixed, original, vbBinaryCompare) = 0 Then
-        RememberHandled original
+        TraceLine "Result: no change needed"
+        RememberHandled target, original, original
         CorrectRange = True
         Exit Function
     End If
@@ -141,7 +160,7 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
         ' Skipped silently; the log keeps what was sent and what came back, to tune the check.
         LogLine "  SKIPPED reply that changed the text too much (" & Len(original) & " -> " & Len(fixed) & _
             " chars): original=[" & Left$(original, 200) & "] reply=[" & Left$(fixed, 200) & "]"
-        RememberHandled original
+        RememberHandled target, original, original
         CorrectRange = True
         Exit Function
     End If
@@ -150,15 +169,18 @@ Private Function CorrectRange(ByVal target As Range) As Boolean
     t = NowMs()
     ApplyDiff target, original, fixed
     LogLine "  applyDiff=" & SinceMs(t) & "ms"
-    RememberHandled original      ' so undoing the correction is not corrected again
-    RememberHandled fixed
+    TraceLine "Result: correction applied"
+    RememberHandled target, original, fixed      ' both, so undoing the correction is not corrected again
     CorrectRange = True
     Exit Function
 
 Failed:
     errNumber = Err.Number
     errDescription = Err.Description
-    If errNumber = ERR_CANCELLED Then Exit Function      ' Esc pressed: leave the text as typed, no dialog
+    If errNumber = ERR_CANCELLED Then                    ' Esc pressed: leave the text as typed, no dialog
+        TraceLine "Result: cancelled with Esc, text left as typed"
+        Exit Function
+    End If
     If Left$(stage, 10) = "contacting" Then
         elapsedMs = SinceMs(t)
         LogLine "  FAILED while " & stage & " (after " & elapsedMs & " ms): " & errNumber & " " & errDescription
@@ -170,24 +192,64 @@ Failed:
 
 End Function
 
-' True if this exact paragraph text was already sent and settled earlier in this Word session, so
-' pressing Enter on a line that has not changed does not call the model again. A failed request is not
-' remembered, so it can be retried.
-Private Function AlreadyHandled(ByVal text As String) As Boolean
-    If mHandled Is Nothing Then Exit Function
-    AlreadyHandled = mHandled.Exists(text)
+' True if this paragraph (this place in the document, with this text) was already sent and settled earlier in
+' this Word session, so pressing Enter on a line that has not changed does not call the model again. The same
+' words on a different line still count as new. A failed request is not remembered, so it can be retried.
+Private Function AlreadyHandled(ByVal target As Range) As Boolean
+
+    Dim i As Long
+    Dim t As String
+
+    i = FindHandled(target)
+    If i = 0 Then Exit Function
+    t = target.Text
+    AlreadyHandled = (StrComp(t, mHText1(i), vbBinaryCompare) = 0) Or (StrComp(t, mHText2(i), vbBinaryCompare) = 0)
+
 End Function
 
-Private Sub RememberHandled(ByVal text As String)
+Private Sub RememberHandled(ByVal target As Range, ByVal before As String, ByVal after As String)
 
-    If mHandled Is Nothing Then
-        Set mHandled = CreateObject("Scripting.Dictionary")
-        mHandled.CompareMode = 0            ' binary: case and spacing matter
+    Dim i As Long
+
+    i = FindHandled(target)
+    If i = 0 Then
+        mHNext = mHNext + 1
+        If mHNext > MAX_HANDLED Then mHNext = 1
+        If mHCount < mHNext Then mHCount = mHNext
+        i = mHNext
     End If
-    If mHandled.Count >= MAX_HANDLED Then mHandled.RemoveAll
-    mHandled(text) = True
+    Set mHRange(i) = target.Duplicate
+    mHText1(i) = before
+    mHText2(i) = after
 
 End Sub
+
+' The remembered entry for the paragraph that starts where target starts, or 0.
+Private Function FindHandled(ByVal target As Range) As Long
+
+    Dim i As Long
+
+    For i = 1 To mHCount
+        If Not mHRange(i) Is Nothing Then
+            If SameSpot(mHRange(i), target) Then
+                FindHandled = i
+                Exit Function
+            End If
+        End If
+    Next i
+
+End Function
+
+' Same document and same start. A range whose document was closed raises an error: it matches nothing.
+Private Function SameSpot(ByVal remembered As Range, ByVal target As Range) As Boolean
+
+    On Error GoTo Gone
+    If remembered.Document Is target.Document Then SameSpot = (remembered.Start = target.Start)
+    Exit Function
+Gone:
+    SameSpot = False
+
+End Function
 
 ' The model in use: GEMINI_MODEL from config.ini (re-read each call, so a change applies at once),
 ' otherwise MODEL_NAME.
@@ -348,6 +410,8 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
         """messages"":[{""role"":""system"",""content"":""" & JsonEscape(SYSTEM_PROMPT) & """}," & _
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
+    TraceBlock "LLM request: POST " & apiUrl, requestBody
+
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
     request.Open "POST", apiUrl, True          ' True = asynchronous, so Esc can cancel the wait
     request.SetTimeouts 5000, 10000, 20000, 60000
@@ -360,6 +424,7 @@ Private Function RequestCorrection(ByVal paragraphText As String) As String
     LogLine "    http send=" & SinceMs(t) & "ms status=" & request.Status
 
     responseBody = FromUtf8(request.ResponseBody)
+    TraceBlock "LLM response: HTTP " & CStr(request.Status), responseBody
 
     If request.Status < 200 Or request.Status >= 300 Then
         RememberHttp request.Status, responseBody
