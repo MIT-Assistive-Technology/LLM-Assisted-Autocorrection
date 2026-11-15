@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- New: Cartesia can be used instead of ElevenLabs for speech. Set `TTS_PROVIDER=cartesia` in config.ini and add `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID`; the key-change shortcut now asks for these too. ElevenLabs stays the default.
+
 ## 0.2.0
 - New: Enter plays a short confirmation ping, and a low hum plays while a correction is waiting on the model (it stops when the reply arrives). The hum stays off in Off mode.
 - New: Esc cancels a correction that is waiting on the model, and stops speech that is playing. The text is left as typed.

@@ -73,8 +73,8 @@ Public Sub ReportApiFailure(ByVal provider As String, ByVal model As String, ByV
     LogLine "  problem [" & topic & "]: " & message & " | err=" & errNumber & " http=" & mHttpStatus & _
         " " & Left$(errDescription, 200)
 
-    ' ElevenLabs problems are not read aloud: the voice is what failed.
-    ShowProblem message, detail, (provider <> "ElevenLabs")
+    ' Speech provider problems are not read aloud: the voice is what failed.
+    ShowProblem message, detail, (provider <> "ElevenLabs" And provider <> "Cartesia")
 
 End Sub
 
@@ -143,15 +143,15 @@ Private Sub ClassifyHttp(ByVal provider As String, ByVal model As String, ByVal 
                 SetKeyRejected provider, topic, message
             End If
         Case 404
-            If provider = "ElevenLabs" Then
-                SetBadVoice topic, message
+            If provider = "ElevenLabs" Or provider = "Cartesia" Then
+                SetBadVoice provider, topic, message
             Else
                 topic = provider & " model"
                 message = "Your " & provider & " key does not have access to your selected model, " & model & "."
             End If
         Case 422
-            If provider = "ElevenLabs" Then
-                SetBadVoice topic, message
+            If provider = "ElevenLabs" Or provider = "Cartesia" Then
+                SetBadVoice provider, topic, message
             Else
                 topic = provider & " request"
                 message = provider & " rejected the request."
@@ -195,9 +195,9 @@ Private Sub SetRateLimited(ByVal provider As String, ByRef topic As String, ByRe
     message = provider & " is rate limiting requests. Please wait a moment and try again; if it keeps happening, check your plan and billing."
 End Sub
 
-Private Sub SetBadVoice(ByRef topic As String, ByRef message As String)
+Private Sub SetBadVoice(ByVal provider As String, ByRef topic As String, ByRef message As String)
     topic = "voice"
-    message = "Your ElevenLabs voice ID isn't valid, please check it with the 'Change LLM Autocorrect Keys' shortcut."
+    message = "Your " & provider & " voice ID isn't valid, please check it with the 'Change LLM Autocorrect Keys' shortcut."
 End Sub
 
 Private Function Contains(ByVal haystackLower As String, ByVal needleLower As String) As Boolean

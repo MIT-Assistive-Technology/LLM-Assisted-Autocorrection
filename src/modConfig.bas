@@ -40,8 +40,27 @@ Public Function HasGeminiKey() As Boolean
     HasGeminiKey = Len(ConfigValue("GEMINI_API_KEY")) > 0
 End Function
 
-' True when everything ElevenLabs speech needs is saved (key and voice ID).
+' The speech provider named by TTS_PROVIDER in config.ini: "Cartesia" or "ElevenLabs" (the default,
+' also used for any unrecognised value so existing installs keep working).
+Public Function SpeechProvider() As String
+    If LCase$(ConfigValue("TTS_PROVIDER")) = "cartesia" Then
+        SpeechProvider = "Cartesia"
+    Else
+        SpeechProvider = "ElevenLabs"
+    End If
+End Function
+
+' The config names holding the active speech provider's API key and voice ID.
+Public Function SpeechKeyName() As String
+    If SpeechProvider() = "Cartesia" Then SpeechKeyName = "CARTESIA_API_KEY" Else SpeechKeyName = "ELEVENLABS_API_KEY"
+End Function
+
+Public Function SpeechVoiceName() As String
+    If SpeechProvider() = "Cartesia" Then SpeechVoiceName = "CARTESIA_VOICE_ID" Else SpeechVoiceName = "ELEVENLABS_VOICE_ID"
+End Function
+
+' True when everything the active speech provider needs is saved (key and voice ID).
 Public Function HasSpeechConfig() As Boolean
-    HasSpeechConfig = Len(ConfigValue("ELEVENLABS_API_KEY")) > 0 And _
-        Len(ConfigValue("ELEVENLABS_VOICE_ID")) > 0
+    HasSpeechConfig = Len(ConfigValue(SpeechKeyName())) > 0 And _
+        Len(ConfigValue(SpeechVoiceName())) > 0
 End Function
