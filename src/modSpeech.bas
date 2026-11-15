@@ -46,8 +46,6 @@ Public Sub PlayEnterPing()
     Dim pingPath As String
     Dim resumeHum As Boolean
 
-    If mPlaybackActive Then Exit Sub
-
     resumeHum = mCorrectionHumPlaying
     If resumeHum Then StopCorrectionHum
 
