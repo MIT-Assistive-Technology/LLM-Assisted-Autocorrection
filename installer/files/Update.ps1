@@ -68,6 +68,15 @@ function Run-Update {
             $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $appDir 'Set-Keys.ps1')`""
             $s.Save()
         }
+        # Installs from before trace logging have no traces shortcut yet.
+        $traceDir = Join-Path $appDir 'traces'
+        New-Item -ItemType Directory -Force $traceDir | Out-Null
+        $traceLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'LLM Autocorrect Traces.lnk'
+        if (-not (Test-Path $traceLnk)) {
+            $s = (New-Object -ComObject WScript.Shell).CreateShortcut($traceLnk)
+            $s.TargetPath = $traceDir
+            $s.Save()
+        }
         Say "Updated v$installed -> v$latest."
         return 0
     } catch {

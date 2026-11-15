@@ -115,6 +115,7 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
     Dim cachePath As String
     Dim provider As String
     Dim model As String
+    Dim patched As Boolean
 
     If Len(Trim$(text)) = 0 Then Exit Sub
 
@@ -137,6 +138,7 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
     If cached Then
         cachePath = NoticeCachePath(provider, model, voiceId, text)
         If Len(Dir$(cachePath)) > 0 Then
+            TraceLine "Speech: played saved clip " & cachePath
             PlaySound StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT
             Exit Sub
         End If
@@ -163,11 +165,14 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
         request.SetRequestHeader "Accept", "application/octet-stream"
         request.SetRequestHeader "xi-api-key", apiKey
     End If
+    TraceBlock "Speech request: " & provider & ", model " & model & ", voice " & voiceId, requestBody
     SendCancellable request, ToUtf8(requestBody)
 
     statusCode = request.Status
+    TraceLine "Speech response: HTTP " & CStr(statusCode)
     If statusCode < 200 Or statusCode >= 300 Then
         responseText = request.ResponseText
+        TraceBlock "Speech error body", responseText
         RememberHttp statusCode, responseText
         Err.Raise ERR_HTTP, "SpeakCorrectedText", _
             provider & " returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
@@ -184,7 +189,11 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
             provider & " returned no audio data."
     End If
 
-    If provider = "Cartesia" Then audio = FixStreamingWavHeader(audio)
+    TraceLine "Speech audio: " & CStr(UBound(audio) - LBound(audio) + 1) & " bytes"
+    If provider = "Cartesia" Then
+        audio = FixStreamingWavHeader(audio, patched)
+        If patched Then TraceLine "Speech audio: streaming WAV header sizes filled in"
+    End If
 
     If cached Then
         SaveAudioFile audio, cachePath
@@ -197,6 +206,7 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
 
     StopAndRemovePreviousAudio
     mAudioPath = SaveAudioFile(audio)
+    TraceLine "Speech: playing " & mAudioPath
     If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
         Err.Raise vbObjectError + 2102, "SpeakCorrectedText", "Windows could not start audio playback."
     End If
@@ -299,7 +309,7 @@ End Function
 ' Cartesia streams its WAV, so the RIFF size and the data chunk size are both &HFFFFFFFF ("unknown").
 ' PlaySound will not play that. Fill in the real sizes from the number of bytes received. Audio that
 ' is not a WAV, or already has real sizes, is returned unchanged.
-Private Function FixStreamingWavHeader(ByVal audio As Variant) As Variant
+Private Function FixStreamingWavHeader(ByVal audio As Variant, ByRef patched As Boolean) As Variant
 
     Dim b() As Byte
     Dim n As Long
@@ -315,6 +325,7 @@ Private Function FixStreamingWavHeader(ByVal audio As Variant) As Variant
     If b(4) <> 255 Or b(5) <> 255 Or b(6) <> 255 Or b(7) <> 255 Then Exit Function
 
     PutSize32 b, 4, n - 8
+    patched = True
 
     pos = 12
     Do While pos + 8 <= n

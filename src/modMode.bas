@@ -43,12 +43,16 @@ End Function
 ' Shows the mode in the status bar for a couple of seconds, then clears it.
 Public Sub ShowModeStatus()
 
-    ShowStatus "Autocorrect Automation: " & ModeLabel(CurrentMode())
+    Dim text As String
+
+    text = "Autocorrect Automation: " & ModeLabel(CurrentMode())
+    If TraceContinuous() Then text = text & " | Trace on"
+    ShowStatus text
 
 End Sub
 
 ' Shows text in the status bar for a few seconds, then clears it.
-Private Sub ShowStatus(ByVal text As String)
+Public Sub ShowStatus(ByVal text As String)
 
     On Error Resume Next
     Application.StatusBar = text

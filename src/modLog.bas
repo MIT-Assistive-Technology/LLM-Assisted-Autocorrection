@@ -31,6 +31,7 @@ Public Sub LogLine(ByVal message As String)
     Dim ms As Long
 
     On Error Resume Next
+    TraceLine message          ' the current trace (if any) gets every timing and problem line too
     If Dir$(LogPath()) <> "" Then
         If FileLen(LogPath()) > MAX_LOG_BYTES Then Kill LogPath()
     End If

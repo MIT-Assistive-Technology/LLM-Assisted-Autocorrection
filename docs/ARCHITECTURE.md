@@ -40,6 +40,15 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - **Privacy.** Every finished paragraph goes to the model provider; when configured, it also goes to ElevenLabs for speech generation.
 - **Untested end-to-end** through the installer and updater.
 
+## Trace logging
+
+`src/modTrace.bas` records every pass of Enter that does work (paragraph, request and response bodies, checks, speech call) in memory, as `modLog.LogLine` and explicit `TraceBlock` calls fill it in. Two typed commands, handled first thing in `EnterAndCorrectParagraph` when the whole paragraph is exactly the marker (the marker line stays in the document and the model is not called):
+
+- `!!!` writes the previous pass's trace to the file.
+- `@@@` writes every pass's trace until `@@@` is typed again. It lives in memory only, so restarting Word turns it off. The status bar shows "Trace on" and the voice says "Trace on" / "Trace off". A successful `!!!` is spoken as "Logged trace." The installer (and `Update.ps1` for older installs) creates a desktop shortcut, "LLM Autocorrect Traces", to the traces folder.
+
+All traces for a document go to `%APPDATA%\LLMAutocorrect	races\<document name>.trace.log`, appended. Files are never deleted automatically, stop growing at 5 MB, and hold document text but never API keys. `TRACE_COMMANDS=off` in config.ini (only there; default `on`) disables both the commands and the recording. `debug.log` is unchanged and only holds timings.
+
 ## Speech configuration
 
 Add the following entries to `%APPDATA%\LLMAutocorrect\config.ini`, using your ElevenLabs API key and voice ID. Both are required to enable speech; blank values leave autocorrection working without speech:
