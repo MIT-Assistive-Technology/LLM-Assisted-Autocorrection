@@ -76,27 +76,27 @@ $eleven = Get-Setting $lines 'ELEVENLABS_API_KEY'
 $voice  = Get-Setting $lines 'ELEVENLABS_VOICE_ID'
 $model  = Get-Setting $lines 'GEMINI_MODEL'
 $effort = Get-Setting $lines 'GEMINI_REASONING'
+$cartesia = Get-Setting $lines 'CARTESIA_API_KEY'
+$cvoice   = Get-Setting $lines 'CARTESIA_VOICE_ID'
+$ttsProvider = Get-Setting $lines 'TTS_PROVIDER'
 
 Write-Host 'Saved now:'
 Write-Host "  Gemini API key      $(Mask $gemini)"
-Write-Host "  ElevenLabs API key  $(Mask $eleven)"
-Write-Host "  ElevenLabs voice ID $(if ($voice) { $voice } else { '(not set)' })"
 Write-Host "  Gemini model        $(if ($model) { $model } else { "$defaultModel (default)" })"
 Write-Host "  Gemini reasoning    $(if ($effort) { $effort } else { "$defaultEffort (default)" })"
+Write-Host "  Speech provider     $(if ($ttsProvider) { $ttsProvider } else { 'elevenlabs (default)' })"
+Write-Host "  Cartesia API key    $(Mask $cartesia)"
+Write-Host "  Cartesia voice ID   $(if ($cvoice) { $cvoice } else { '(not set)' })"
+Write-Host "  ElevenLabs API key  $(Mask $eleven)"
+Write-Host "  ElevenLabs voice ID $(if ($voice) { $voice } else { '(not set)' })"
 Write-Host ''
 Write-Host 'Press Enter to keep a value, or type a new one. Typing is hidden for keys.'
-Write-Host 'To remove the ElevenLabs key or voice ID, type  none. To reset the Gemini model or reasoning, type  default'
+Write-Host 'To remove an ElevenLabs or Cartesia key or voice ID, type  none. To reset the speech provider, Gemini model or reasoning, type  default'
 Write-Host 'Reasoning is one of: minimal (fastest), low, medium, high.'
 Write-Host ''
 
 $new = Read-Plain 'New Gemini API key'
 if ($new) { $gemini = $new }
-
-$new = Read-Plain 'New ElevenLabs API key'
-if ($new -ieq 'none') { $eleven = '' } elseif ($new) { $eleven = $new }
-
-$new = (Read-Host 'New ElevenLabs voice ID').Trim()
-if ($new -ieq 'none') { $voice = '' } elseif ($new) { $voice = $new }
 
 $new = (Read-Host 'New Gemini model').Trim()
 if ($new -ieq 'default') { $model = '' } elseif ($new) { $model = $new }
@@ -108,6 +108,25 @@ if ($effort -and $effort -notin 'minimal', 'low', 'medium', 'high') {
     Finish 1
 }
 
+$new = (Read-Host 'Speech provider (elevenlabs or cartesia)').Trim().ToLower()
+if ($new -eq 'default') { $ttsProvider = '' } elseif ($new) { $ttsProvider = $new }
+if ($ttsProvider -and $ttsProvider -notin 'elevenlabs', 'cartesia') {
+    Write-Host "'$ttsProvider' is not elevenlabs or cartesia, so nothing was changed." -ForegroundColor Red
+    Finish 1
+}
+
+$new = Read-Plain 'New Cartesia API key'
+if ($new -ieq 'none') { $cartesia = '' } elseif ($new) { $cartesia = $new }
+
+$new = (Read-Host 'New Cartesia voice ID').Trim()
+if ($new -ieq 'none') { $cvoice = '' } elseif ($new) { $cvoice = $new }
+
+$new = Read-Plain 'New ElevenLabs API key'
+if ($new -ieq 'none') { $eleven = '' } elseif ($new) { $eleven = $new }
+
+$new = (Read-Host 'New ElevenLabs voice ID').Trim()
+if ($new -ieq 'none') { $voice = '' } elseif ($new) { $voice = $new }
+
 if (-not $gemini) {
     Write-Host 'A Gemini API key is required, so nothing was changed.' -ForegroundColor Red
     Finish 1
@@ -116,6 +135,9 @@ if (-not $gemini) {
 $lines = Set-Setting $lines 'GEMINI_API_KEY' $gemini
 $lines = Set-Setting $lines 'ELEVENLABS_API_KEY' $eleven
 $lines = Set-Setting $lines 'ELEVENLABS_VOICE_ID' $voice
+$lines = Set-Setting $lines 'TTS_PROVIDER' $ttsProvider
+$lines = Set-Setting $lines 'CARTESIA_API_KEY' $cartesia
+$lines = Set-Setting $lines 'CARTESIA_VOICE_ID' $cvoice
 $lines = Set-Setting $lines 'GEMINI_MODEL' $model
 $lines = Set-Setting $lines 'GEMINI_REASONING' $effort
 
@@ -145,7 +167,11 @@ try {
 
 Write-Host ''
 Write-Host 'Saved. The change applies right away; there is no need to restart Word.' -ForegroundColor Green
-if (-not $eleven -or -not $voice) {
+if ($ttsProvider -eq 'cartesia') {
+    if (-not $cartesia -or -not $cvoice) {
+        Write-Host 'Without a Cartesia API key and voice ID, corrections will not be read aloud.'
+    }
+} elseif (-not $eleven -or -not $voice) {
     Write-Host 'Without an ElevenLabs API key and voice ID, corrections will not be read aloud.'
 }
 Finish 0

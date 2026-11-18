@@ -30,6 +30,12 @@ Private Const MAX_CHANGE_SLACK As Long = 10    ' ...plus this many characters, f
 Private mPromptedKeys As Object                ' keys typed into the fallback prompt, by config name
 Private mCorrectionQueue As Collection
 Private mPollScheduled As Boolean
+Private Const MAX_HANDLED As Long = 300
+Private mHRange(1 To MAX_HANDLED) As Range
+Private mHText1(1 To MAX_HANDLED) As String
+Private mHText2(1 To MAX_HANDLED) As String
+Private mHCount As Long
+Private mHNext As Long
 
 Private Const POLL_MACRO_NAME As String = _
     "modCorrectParagraph.PollPendingWork"
@@ -41,6 +47,11 @@ Public Sub EnterAndCorrectParagraph()
     Dim paragraphText As String
     Dim mode As Long
     Dim model As String
+
+    If TraceHandleCommand() Then
+        Selection.TypeParagraph
+        Exit Sub
+    End If
 
     mode = CurrentMode()
     If mode = MODE_OFF Then
@@ -73,7 +84,13 @@ Public Sub EnterAndCorrectParagraph()
 
     If Len(Trim$(paragraphText)) >= MIN_CHARS Then
         model = ActiveModel()
-        QueueCorrection target, paragraphText, mode, model
+        If AlreadyHandled(target) Then
+            TraceBegin paragraphText, mode, target.Document
+            TraceLine "Result: unchanged since the last pass; skipped"
+            TraceEnd
+        Else
+            QueueCorrection target, paragraphText, mode, model
+        End If
     End If
 
     ShowModeStatus
@@ -87,6 +104,7 @@ Private Sub QueueCorrection(ByVal target As Range, ByVal original As String, _
     ByVal mode As Long, ByVal model As String)
 
     Dim job As Object
+    Dim trace As Object
 
     If mCorrectionQueue Is Nothing Then Set mCorrectionQueue = New Collection
 
@@ -95,6 +113,10 @@ Private Sub QueueCorrection(ByVal target As Range, ByVal original As String, _
     job.Add "Original", original
     job.Add "Mode", mode
     job.Add "Model", model
+    Set trace = TraceBegin(original, mode, target.Document)
+    job.Add "Trace", trace
+    TraceLine "Correction queued"
+    TraceDetach
     mCorrectionQueue.Add job
 
     If mCorrectionQueue.Count = 1 Then StartNextCorrection
@@ -116,10 +138,12 @@ Private Sub StartNextCorrection()
     If job.Exists("Request") Then Exit Sub
 
     On Error GoTo Failed
+    TraceActivate job("Trace")
     model = CStr(job("Model"))
     Set request = StartCorrectionRequest(CStr(job("Original")), model)
     job.Add "Request", request
     StartCorrectionHum
+    TraceDetach
     Exit Sub
 
 Failed:
@@ -128,6 +152,7 @@ Failed:
     StopCorrectionHum
     ReportApiFailure ProviderName(model), model, errorNumber, errorDescription, _
         0, "Your text was left as typed."
+    TraceEnd
     mCorrectionQueue.Remove 1
 
 End Sub
@@ -158,6 +183,9 @@ Public Sub CancelPendingWork()
     If Not mCorrectionQueue Is Nothing Then
         For i = mCorrectionQueue.Count To 1 Step -1
             Set job = mCorrectionQueue(i)
+            TraceActivate job("Trace")
+            TraceLine "Result: cancelled with Esc"
+            TraceEnd
             If job.Exists("Request") Then
                 Set request = job("Request")
                 On Error Resume Next
@@ -185,6 +213,7 @@ Public Sub PollPendingWork()
     Dim errorDescription As String
     Dim stage As String
     Dim model As String
+    Dim speechQueued As Boolean
 
     mPollScheduled = False
     ClearModeStatus
@@ -196,26 +225,33 @@ Public Sub PollPendingWork()
             If job.Exists("Request") Then
                 Set request = job("Request")
                 model = CStr(job("Model"))
+                TraceActivate job("Trace")
                 On Error GoTo RequestFailed
                 If request.WaitForResponse(0) Then
                     StopCorrectionHum
                     stage = "checking the reply"
                     fixed = ReadCorrectionResponse(request)
+                    TraceBlock "Model reply (content, as received)", fixed
                     Set target = job("Target")
                     original = CStr(job("Original"))
 
                     If StrComp(target.Text, original, vbBinaryCompare) = 0 Then
                         stage = "applying the correction"
                         If ApplyCorrectionResult(target, original, fixed) Then
-                            If CLng(job("Mode")) = MODE_NARRATE Then SpeakCorrectedText fixed
+                            RememberHandled target, original, fixed
+                            If CLng(job("Mode")) = MODE_NARRATE Then speechQueued = SpeakCorrectedText(fixed)
                         End If
                     Else
+                        TraceLine "Result: skipped because the paragraph changed"
                         Application.StatusBar = _
                             "Autocorrection skipped: that paragraph changed after Enter."
                     End If
 
+                    If speechQueued Then TraceDetach Else TraceEnd
                     mCorrectionQueue.Remove 1
                     If mCorrectionQueue.Count > 0 Then StartNextCorrection
+                Else
+                    TraceDetach
                 End If
                 On Error GoTo 0
             Else
@@ -241,6 +277,7 @@ RequestFailed:
         ReportApiFailure ProviderName(model), model, errorNumber, errorDescription, _
             0, "Your text was left as typed."
     End If
+    TraceEnd
     mCorrectionQueue.Remove 1
     If mCorrectionQueue.Count > 0 Then StartNextCorrection
     On Error GoTo 0
@@ -269,13 +306,16 @@ Private Function ApplyCorrectionResult(ByVal target As Range, _
     lead = Left$(original, Len(original) - Len(LTrim$(original)))
     trail = Right$(original, Len(original) - Len(RTrim$(original)))
     fixed = lead & Trim$(fixed) & trail
+    TraceBlock "Reply after cleanup (tags stripped, spacing restored)", fixed
 
     If StrComp(fixed, original, vbBinaryCompare) = 0 Then
+        TraceLine "Result: no change needed"
         Application.StatusBar = "Autocorrection found no changes for that paragraph."
         ApplyCorrectionResult = True
         Exit Function
     End If
     If Not ReplyLooksSane(original, fixed) Then
+        TraceLine "Result: rejected because the reply changed too much"
         Application.StatusBar = "Autocorrection reply was rejected; the paragraph was left unchanged."
         MsgBox ActiveModel() & "'s reply changed the text too much, so it was not applied.", _
             vbExclamation, "Autocorrection"
@@ -291,9 +331,50 @@ Private Function ApplyCorrectionResult(ByVal target As Range, _
     End If
 
     Application.ScreenRefresh
+    TraceLine "Result: correction applied"
     Application.StatusBar = "Autocorrection applied to the completed paragraph."
     ApplyCorrectionResult = True
 
+End Function
+
+Private Function AlreadyHandled(ByVal target As Range) As Boolean
+    Dim i As Long
+    i = FindHandled(target)
+    If i = 0 Then Exit Function
+    AlreadyHandled = (StrComp(target.Text, mHText1(i), vbBinaryCompare) = 0) Or _
+        (StrComp(target.Text, mHText2(i), vbBinaryCompare) = 0)
+End Function
+
+Private Sub RememberHandled(ByVal target As Range, ByVal before As String, ByVal after As String)
+    Dim i As Long
+    i = FindHandled(target)
+    If i = 0 Then
+        mHNext = mHNext + 1
+        If mHNext > MAX_HANDLED Then mHNext = 1
+        If mHCount < mHNext Then mHCount = mHNext
+        i = mHNext
+    End If
+    Set mHRange(i) = target.Duplicate
+    mHText1(i) = before
+    mHText2(i) = after
+End Sub
+
+Private Function FindHandled(ByVal target As Range) As Long
+    Dim i As Long
+    For i = 1 To mHCount
+        If Not mHRange(i) Is Nothing Then
+            If SameSpot(mHRange(i), target) Then
+                FindHandled = i
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+Private Function SameSpot(ByVal remembered As Range, ByVal target As Range) As Boolean
+    On Error GoTo Gone
+    If remembered.Document Is target.Document Then SameSpot = (remembered.Start = target.Start)
+Gone:
 End Function
 
 ' What the user message looks like. Keep in step with SYSTEM_PROMPT.
@@ -445,6 +526,7 @@ Private Function StartCorrectionRequest(ByVal paragraphText As String, _
         """messages"":[{""role"":""system"",""content"":""" & JsonEscape(SYSTEM_PROMPT) & """}," & _
         "{""role"":""user"",""content"":""" & JsonEscape(BuildUserMessage(paragraphText)) & """}]}"
 
+    TraceBlock "LLM request: POST " & apiUrl, requestBody
     Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
     request.Open "POST", apiUrl, True
     request.SetTimeouts 5000, 10000, 20000, 60000
@@ -461,6 +543,7 @@ Private Function ReadCorrectionResponse(ByVal request As Object) As String
     Dim choicesPosition As Long
 
     responseBody = FromUtf8(request.ResponseBody)
+    TraceBlock "LLM response: HTTP " & CStr(request.Status), responseBody
 
     If request.Status < 200 Or request.Status >= 300 Then
         RememberHttp request.Status, responseBody

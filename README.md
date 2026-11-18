@@ -22,4 +22,4 @@ Building needs desktop Word and `gh` (GitHub CLI, logged in). When installing fr
 
 ## Privacy
 
-Every finished paragraph is sent to the model provider (Google by default). If configured, the corrected paragraph is also sent to ElevenLabs for speech generation. Do not use this on confidential documents. API keys are stored per-user in `%APPDATA%\LLMAutocorrect\config.ini` and never enter the repo or the release.
+Every finished paragraph is sent to the model provider (Google by default). If configured, the corrected paragraph is also sent to ElevenLabs for speech generation. Do not use this on confidential documents. Trace logging (`!!!` and `@@@` on a line of their own) saves the text of your document, and the requests and replies, to `%APPDATA%\LLMAutocorrect	races`; set `TRACE_COMMANDS=off` in config.ini to disable it. API keys are stored per-user in `%APPDATA%\LLMAutocorrect\config.ini` and never enter the repo or the release.

@@ -10,7 +10,7 @@
 4. applies a reply only if its live range still exactly matches the captured text, preserving any newer edits,
 5. strips a stray `<text>` wrapper, restores original leading/trailing spaces, rejects replies that are empty, add line breaks, or differ in length by more than 30% (+10 characters), and rewrites only the changed span,
 6. verifies the result using a fresh range because Word may shrink the edited range to the unchanged prefix,
-7. queues the complete corrected text for asynchronous ElevenLabs narration only when the job was
+7. queues the complete corrected text for asynchronous narration only when the job was
    queued in Correction + Narration mode.
 
 With a selection, Enter just inserts a paragraph. Enter midway through a paragraph splits at the caret and corrects only the text before the split. Requests are processed in Enter order. Errors are reported in a message box. The prompt is the
@@ -46,7 +46,7 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - The template lives in Word's STARTUP folder, so it loads with every Word session. The key binding is stored inside the template.
 - `src/modConfig.bas` reads `%APPDATA%\LLMAutocorrect\config.ini`. The installer asks for the Gemini key (required, since the default model is a Gemini model) and writes it there; a key for another provider, such as `OPENAI_API_KEY=...`, can be added to the file by hand; the module asks with a prompt only if the file has none for the chosen model's provider. The file is outside the template, so updates never touch it.
 - The STARTUP `.dotm` is a generated, per-user installed copy; it is not the editable source. To update VBA behavior, change `src/*.bas`, build with `scripts\Build-Template.ps1`, and install the result with `installer\Install.cmd` or `scripts\Release.ps1 -NoPublish` followed by the bundled installer. Each user configures their own API keys and voice ID during installation or in their own `%APPDATA%\LLMAutocorrect\config.ini`; these values never enter the shared template or ZIP.
-- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are optional. The installer offers prompts for both, and they can also be added to `config.ini` by hand. When both are set and the current mode is Correction + Narration, each successfully processed paragraph is sent to ElevenLabs using `eleven_flash_v2_5` with WAV output; a shared timer polls requests and Windows MCI plays the returned WAV asynchronously from a temporary file. The timer checks MCI playback status, and later narration and cached announcements wait until earlier playback finishes. The temporary WAV is removed when playback finishes or is stopped. Speech errors are reported without blocking typing.
+- Speech credentials are optional. In Correction + Narration mode, successfully processed paragraphs are sent to the configured provider, ElevenLabs or Cartesia. A shared timer polls requests and Windows MCI plays the returned WAV asynchronously from a temporary file. Cached announcements are also copied to a temporary file for playback because MCI rejects long filenames; the cached original is retained. The timer checks MCI playback status, and later narration and cached announcements wait until earlier playback finishes. The temporary WAV is removed when playback finishes or is stopped. Speech errors are reported without blocking typing.
 - The installer and updater place `enter-ping.wav` and `correction-hum.wav` in `%APPDATA%\LLMAutocorrect`. The ping plays on Enter, including during narration; the hum loops while a model request is in progress unless narration is playing. No audio configuration or files from the user are required. If a sound file cannot be played, a warning is shown and autocorrection continues without that sound.
 - A scheduled task runs `Update.ps1` 30 s after each sign-in. It compares `VERSION` with the latest GitHub release, and if newer (and Word is closed) swaps in the new template. The repo is public, so no authentication is needed.
 
@@ -56,8 +56,21 @@ Anthony's `EnterAndCorrectLastParagraph` is kept (OpenAI `gpt-4o-mini`, needs `O
 - **Timer polling.** Word supports one active `Application.OnTime` timer; another macro cannot use it without interference.
 - **Sound cues during narration.** The correction hum is suppressed while narration plays.
 - **Message boxes on error** interrupt typing.
-- **Privacy.** Every finished paragraph goes to the model provider; when configured, it also goes to ElevenLabs for speech generation.
+- **Privacy.** Every finished paragraph goes to the model provider; when narration is enabled, it also goes to the configured speech provider.
 - **Untested end-to-end** through the installer and updater.
+
+## Trace logging
+
+When trace commands are enabled, type `!!!` on its own line and press Enter to save the most recently
+completed trace, or `@@@` to toggle saving traces for subsequent corrections. The marker stays in the
+document and is not sent to the model. Traces follow each queued correction and its speech request
+independently; a trace finishes after its speech request starts playback or fails, so a pending job
+is not yet available to `!!!`. Continuous tracing applies to jobs queued while it is on.
+
+Traces are appended to `%APPDATA%\LLMAutocorrect\traces\<document name>.trace.log` and contain
+document text and request and response bodies, but not API keys. Treat them as private.
+`TRACE_COMMANDS=off` in `config.ini` disables recording and the commands. Trace files are not
+automatically deleted and stop growing at 5 MB.
 
 ## Speech configuration
 
@@ -69,3 +82,10 @@ ELEVENLABS_VOICE_ID=your_voice_id
 ```
 
 The key is sent in the `xi-api-key` request header. ElevenLabs receives the corrected paragraph text to synthesize it. Narration generation and playback are asynchronous.
+
+### Cartesia (alternative speech provider)
+
+Set `TTS_PROVIDER=cartesia`, `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` in `config.ini`.
+Optionally set `CARTESIA_MODEL` (default `sonic-3.6`). Requests use Cartesia's `/tts/bytes`
+endpoint and ask for 24 kHz 16-bit PCM WAV. Streaming WAV sizes are filled in before MCI
+plays the audio. Cached announcements are separated by provider, model, voice and wording.

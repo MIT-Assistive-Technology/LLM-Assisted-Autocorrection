@@ -120,6 +120,13 @@ $s.TargetPath = 'powershell.exe'
 $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $appDir 'Set-Keys.ps1')`""
 $s.Save()
 
+# --- Desktop shortcut to the saved traces (!!! and @@@ in Word) -------------------
+$traceDir = Join-Path $appDir 'traces'
+New-Item -ItemType Directory -Force $traceDir | Out-Null
+$s = $sh.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'LLM Autocorrect Traces.lnk'))
+$s.TargetPath = $traceDir
+$s.Save()
+
 Write-Host ''
 Write-Host 'Done! Open Word and press Enter.' -ForegroundColor Green
 Write-Host 'ElevenLabs speech runs after correction when ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are configured.'
