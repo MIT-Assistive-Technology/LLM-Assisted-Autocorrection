@@ -57,7 +57,7 @@ Public Sub ShowStatus(ByVal text As String)
     On Error Resume Next
     Application.StatusBar = text
     mClearAt = Now + TimeSerial(0, 0, STATUS_SECONDS)
-    Application.OnTime mClearAt, "modMode.ClearModeStatus"
+    SchedulePendingWorkPoll
 
 End Sub
 
@@ -66,7 +66,11 @@ End Sub
 Public Sub ClearModeStatus()
 
     On Error Resume Next
-    If Now >= mClearAt Then Application.StatusBar = ""
+    If Now >= mClearAt Then
+        Application.StatusBar = ""
+    Else
+        SchedulePendingWorkPoll
+    End If
 
 End Sub
 

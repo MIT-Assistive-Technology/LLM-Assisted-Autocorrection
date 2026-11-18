@@ -5,20 +5,31 @@ Private Const SPEECH_MODEL As String = "eleven_flash_v2_5"
 Private Const SPEECH_URL As String = "https://api.elevenlabs.io/v1/text-to-speech/"
 Private Const CARTESIA_MODEL As String = "sonic-3.6"
 Private Const CARTESIA_URL As String = "https://api.cartesia.ai/tts/bytes"
-Private Const CARTESIA_VERSION As String = "2026-08-14"     ' the only version the API docs list
+Private Const CARTESIA_VERSION As String = "2026-08-14"
 Private Const SND_FILENAME As Long = &H20000
-Private Const SND_ASYNC As Long = &H1             ' return at once; a new sound cuts off the one playing
+Private Const SND_ASYNC As Long = &H1
 Private Const SND_NODEFAULT As Long = &H2
 Private Const SND_LOOP As Long = &H8
 Private Const ENTER_PING_FILE As String = "enter-ping.wav"
 Private Const CORRECTION_HUM_FILE As String = "correction-hum.wav"
+Private Const SPEECH_ALIAS As String = "LLMAutocorrectSpeech"
 
 #If VBA7 Then
 Private Declare PtrSafe Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
     ByVal soundData As LongPtr, ByVal moduleHandle As LongPtr, ByVal flags As Long) As Long
+Private Declare PtrSafe Function mciSendString Lib "winmm.dll" Alias "mciSendStringW" ( _
+    ByVal command As LongPtr, ByVal result As LongPtr, ByVal resultLength As Long, _
+    ByVal callback As LongPtr) As Long
+Private Declare PtrSafe Function mciGetErrorString Lib "winmm.dll" Alias "mciGetErrorStringW" ( _
+    ByVal errorCode As Long, ByVal errorText As LongPtr, ByVal errorTextLength As Long) As Long
 #Else
 Private Declare Function PlaySound Lib "winmm.dll" Alias "PlaySoundW" ( _
     ByVal soundData As Long, ByVal moduleHandle As Long, ByVal flags As Long) As Long
+Private Declare Function mciSendString Lib "winmm.dll" Alias "mciSendStringW" ( _
+    ByVal command As Long, ByVal result As Long, ByVal resultLength As Long, _
+    ByVal callback As Long) As Long
+Private Declare Function mciGetErrorString Lib "winmm.dll" Alias "mciGetErrorStringW" ( _
+    ByVal errorCode As Long, ByVal errorText As Long, ByVal errorTextLength As Long) As Long
 #End If
 
 Private mAudioPath As String
@@ -26,26 +37,41 @@ Private mSpeechConfigWarned As Boolean
 Private mEnterPingWarned As Boolean
 Private mCorrectionHumPlaying As Boolean
 Private mCorrectionHumWarned As Boolean
+Private mSpeechQueue As Collection
+Private mSpeechRequest As Object
+Private mSpeechRequestQuiet As Boolean
+Private mSpeechRequestCached As Boolean
+Private mSpeechCachePath As String
+Private mSpeechProvider As String
+Private mSpeechModel As String
+Private mSpeechTrace As Object
+Private mPlaybackActive As Boolean
 
 Public Sub PlayEnterPing()
 
     Dim pingPath As String
+    Dim resumeHum As Boolean
+
+    resumeHum = mCorrectionHumPlaying
+    If resumeHum Then StopCorrectionHum
 
     On Error GoTo Failed
-
     pingPath = Environ$("APPDATA") & "\LLMAutocorrect\" & ENTER_PING_FILE
     If Len(Dir$(pingPath)) = 0 Then
         WarnEnterPing "The Enter ping file was not found at " & pingPath & "."
-        Exit Sub
+        GoTo Finished
     End If
 
     If PlaySound(StrPtr(pingPath), 0, SND_FILENAME Or SND_NODEFAULT) = 0 Then
         WarnEnterPing "Windows could not play the Enter ping."
     End If
-    Exit Sub
+    GoTo Finished
 
 Failed:
     WarnEnterPing "The Enter ping could not play: " & Err.Description
+
+Finished:
+    If resumeHum Then StartCorrectionHum
 
 End Sub
 
@@ -53,8 +79,9 @@ Public Sub StartCorrectionHum()
 
     Dim humPath As String
 
-    On Error GoTo Failed
+    If mCorrectionHumPlaying Or SpeechPlaybackActive() Then Exit Sub
 
+    On Error GoTo Failed
     humPath = Environ$("APPDATA") & "\LLMAutocorrect\" & CORRECTION_HUM_FILE
     If Len(Dir$(humPath)) = 0 Then
         WarnCorrectionHum "The correction hum file was not found at " & humPath & "."
@@ -76,48 +103,45 @@ Failed:
 End Sub
 
 Public Sub StopCorrectionHum()
+
     If mCorrectionHumPlaying Then
         PlaySound 0, 0, 0
         mCorrectionHumPlaying = False
     End If
+
 End Sub
 
 Private Sub WarnEnterPing(ByVal message As String)
+
     If mEnterPingWarned Then Exit Sub
     mEnterPingWarned = True
     MsgBox message & vbCrLf & "Autocorrection will continue without the ping.", _
         vbExclamation, "Enter sound"
+
 End Sub
 
 Private Sub WarnCorrectionHum(ByVal message As String)
+
     If mCorrectionHumWarned Then Exit Sub
     mCorrectionHumWarned = True
     MsgBox message & vbCrLf & "Autocorrection will continue without the hum.", _
         vbExclamation, "Correction sound"
+
 End Sub
 
-' quiet: swallow failures instead of showing a dialog (used for the short mode-change notices).
-' cached: for fixed phrases (the mode notices). The audio is saved under %APPDATA%\LLMAutocorrect\cache the
-' first time, then played from disk with no request, and playback does not block, so pressing the
-' mode key quickly never waits on the voice.
-Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
-    Optional ByVal cached As Boolean = False)
+Public Function SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Boolean = False, _
+    Optional ByVal cached As Boolean = False) As Boolean
 
     Dim apiKey As String
     Dim voiceId As String
-    Dim request As Object
-    Dim requestBody As String
-    Dim audio As Variant
-    Dim statusCode As Long
-    Dim responseText As String
-    Dim errorNumber As Long
-    Dim errorDescription As String
     Dim cachePath As String
+    Dim item As Object
     Dim provider As String
     Dim model As String
-    Dim patched As Boolean
+    Dim trace As Object
+    Dim priorTrace As Object
 
-    If Len(Trim$(text)) = 0 Then Exit Sub
+    If Len(Trim$(text)) = 0 Then Exit Function
 
     provider = SpeechProvider()
     model = ActiveSpeechModel(provider)
@@ -130,87 +154,236 @@ Public Sub SpeakCorrectedText(ByVal text As String, Optional ByVal quiet As Bool
                 vbInformation, provider & " speech"
             mSpeechConfigWarned = True
         End If
-        Exit Sub
+        Exit Function
     End If
-
-    On Error GoTo Failed
 
     If cached Then
         cachePath = NoticeCachePath(provider, model, voiceId, text)
-        If Len(Dir$(cachePath)) > 0 Then
-            TraceLine "Speech: played saved clip " & cachePath
-            PlaySound StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT
-            Exit Sub
-        End If
     End If
 
-    Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
-    If provider = "Cartesia" Then
-        ' 24 kHz 16-bit PCM WAV, the same format asked of ElevenLabs, which PlaySound can play.
-        requestBody = "{""model_id"":""" & JsonEscape(model) & """," & _
-            """transcript"":""" & JsonEscape(text) & """," & _
-            """voice"":{""id"":""" & JsonEscape(voiceId) & """}," & _
-            """output_format"":{""container"":""wav"",""encoding"":""pcm_s16le"",""sample_rate"":24000}}"
-        request.Open "POST", CARTESIA_URL, True
-        request.SetTimeouts 5000, 5000, 20000, 60000
-        request.SetRequestHeader "Content-Type", "application/json"
-        request.SetRequestHeader "Authorization", "Bearer " & apiKey
-        request.SetRequestHeader "Cartesia-Version", CARTESIA_VERSION
+    If mSpeechQueue Is Nothing Then Set mSpeechQueue = New Collection
+    Set item = CreateObject("Scripting.Dictionary")
+    item.Add "Text", text
+    item.Add "Quiet", quiet
+    item.Add "Cached", cached
+    item.Add "CachePath", cachePath
+    item.Add "Provider", provider
+    item.Add "Model", model
+    item.Add "Voice", voiceId
+    Set priorTrace = TraceCurrent()
+    If Not quiet Then Set trace = priorTrace
+    item.Add "Trace", trace
+    If Not quiet Then TraceLine "Speech queued: " & provider & ", model " & model
+    mSpeechQueue.Add item
+    SpeakCorrectedText = True
+    StartNextSpeechRequest
+    If quiet Then TraceActivate priorTrace
+    If SpeechRequestPending() Then SchedulePendingWorkPoll
+
+End Function
+
+Public Function PollSpeechRequest() As Boolean
+
+    Dim request As Object
+    Dim audio As Variant
+    Dim statusCode As Long
+    Dim responseText As String
+    Dim errorNumber As Long
+    Dim errorDescription As String
+    Dim patched As Boolean
+
+    On Error GoTo Failed
+
+    If mPlaybackActive Then
+        If SpeechPlaybackStopped() Then StopAndRemovePreviousAudio
+    End If
+
+    If Not mSpeechRequest Is Nothing Then
+        TraceActivate mSpeechTrace
+        Set request = mSpeechRequest
+        If Not request.WaitForResponse(0) Then
+            TraceDetach
+            PollSpeechRequest = True
+            Exit Function
+        End If
+
+        Set mSpeechRequest = Nothing
+        statusCode = request.Status
+        TraceLine "Speech response: HTTP " & CStr(statusCode)
+        If statusCode < 200 Or statusCode >= 300 Then
+            responseText = request.ResponseText
+            TraceBlock "Speech error body", responseText
+            RememberHttp statusCode, responseText
+            Err.Raise ERR_HTTP, "PollSpeechRequest", _
+                mSpeechProvider & " returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
+                Left$(responseText, 1500)
+        End If
+
+        audio = request.ResponseBody
+        If Not IsArray(audio) Then
+            Err.Raise vbObjectError + 2101, "PollSpeechRequest", _
+                mSpeechProvider & " returned no audio data."
+        End If
+        If UBound(audio) < LBound(audio) Then
+            Err.Raise vbObjectError + 2101, "PollSpeechRequest", _
+                mSpeechProvider & " returned no audio data."
+        End If
+
+        TraceLine "Speech audio: " & CStr(UBound(audio) - LBound(audio) + 1) & " bytes"
+        If mSpeechProvider = "Cartesia" Then
+            audio = FixStreamingWavHeader(audio, patched)
+            If patched Then TraceLine "Speech audio: streaming WAV header sizes filled in"
+        End If
+        If mSpeechRequestCached Then
+            SaveAudioFile audio, mSpeechCachePath
+            StartCachedSpeechPlayback mSpeechCachePath
+        Else
+            mAudioPath = SaveAudioFile(audio)
+            StartSpeechPlayback mAudioPath
+        End If
+        TraceLine "Speech playback started"
+        TraceEnd
+        Set mSpeechTrace = Nothing
+    End If
+
+    If Not mPlaybackActive And mSpeechRequest Is Nothing Then
+        StartNextSpeechRequest
+    End If
+
+    PollSpeechRequest = SpeechRequestPending()
+    Exit Function
+
+Failed:
+    Set mSpeechRequest = Nothing
+    errorNumber = Err.Number
+    errorDescription = Err.Description
+    On Error Resume Next
+    StopAndRemovePreviousAudio
+    On Error GoTo 0
+    If mSpeechRequestQuiet Then
+        LogLine "  quiet narration failed: " & CStr(errorNumber) & " " & errorDescription
     Else
-        requestBody = "{""text"":""" & JsonEscape(text) & """," & _
-            """model_id"":""" & model & """}"
-        request.Open "POST", SPEECH_URL & voiceId & "?output_format=wav_24000", True
+        ReportApiFailure mSpeechProvider, mSpeechModel, errorNumber, errorDescription, _
+            0, "Correction was applied; narration could not be played."
+    End If
+    TraceEnd
+    Set mSpeechTrace = Nothing
+    PollSpeechRequest = SpeechRequestPending()
+
+End Function
+
+Public Function SpeechRequestPending() As Boolean
+
+    SpeechRequestPending = mPlaybackActive
+    If Not mSpeechRequest Is Nothing Then SpeechRequestPending = True
+    If Not mSpeechQueue Is Nothing Then
+        SpeechRequestPending = SpeechRequestPending Or mSpeechQueue.Count > 0
+    End If
+
+End Function
+
+Public Function SpeechPlaybackActive() As Boolean
+
+    SpeechPlaybackActive = mPlaybackActive
+
+End Function
+
+Public Sub StopSpeech()
+
+    Dim item As Object
+
+    If Not mSpeechRequest Is Nothing Then
+        On Error Resume Next
+        mSpeechRequest.Abort
+        On Error GoTo 0
+        Set mSpeechRequest = Nothing
+    End If
+
+    TraceActivate mSpeechTrace
+    TraceLine "Speech cancelled with Esc"
+    TraceEnd
+    Set mSpeechTrace = Nothing
+    If Not mSpeechQueue Is Nothing Then
+        For Each item In mSpeechQueue
+            TraceActivate item("Trace")
+            TraceLine "Speech cancelled with Esc"
+            TraceEnd
+        Next item
+        Set mSpeechQueue = New Collection
+    End If
+    StopAndRemovePreviousAudio
+
+End Sub
+
+Private Sub StartNextSpeechRequest()
+
+    Dim request As Object
+    Dim requestBody As String
+    Dim item As Object
+    Dim errorNumber As Long
+    Dim errorDescription As String
+    Dim itemRemoved As Boolean
+    Dim apiKey As String
+    Dim voiceId As String
+
+    If mSpeechRequest Is Nothing And Not mPlaybackActive Then
+        If mSpeechQueue Is Nothing Then Exit Sub
+        If mSpeechQueue.Count = 0 Then Exit Sub
+        On Error GoTo Failed
+        Set item = mSpeechQueue(1)
+        mSpeechProvider = CStr(item("Provider"))
+        mSpeechModel = CStr(item("Model"))
+        voiceId = CStr(item("Voice"))
+        Set mSpeechTrace = item("Trace")
+        TraceActivate mSpeechTrace
+        mSpeechRequestQuiet = CBool(item("Quiet"))
+        mSpeechRequestCached = CBool(item("Cached"))
+        mSpeechCachePath = CStr(item("CachePath"))
+        If mSpeechProvider = "Cartesia" Then
+            apiKey = ConfigValue("CARTESIA_API_KEY")
+        Else
+            apiKey = ConfigValue("ELEVENLABS_API_KEY")
+        End If
+        If Len(apiKey) = 0 Then Err.Raise ERR_NO_KEY, "StartNextSpeechRequest", "Speech API key is missing."
+        If mSpeechRequestCached Then
+            If Len(Dir$(mSpeechCachePath)) > 0 Then
+                mSpeechQueue.Remove 1
+                itemRemoved = True
+                StartCachedSpeechPlayback mSpeechCachePath
+                TraceLine "Speech: played saved clip " & mSpeechCachePath
+                TraceEnd
+                Set mSpeechTrace = Nothing
+                Exit Sub
+            End If
+        End If
+        Set request = CreateObject("WinHttp.WinHttpRequest.5.1")
+        If mSpeechProvider = "Cartesia" Then
+            requestBody = "{""model_id"":""" & JsonEscape(mSpeechModel) & """," & _
+                """transcript"":""" & JsonEscape(CStr(item("Text"))) & """," & _
+                """voice"":{""id"":""" & JsonEscape(voiceId) & """}," & _
+                """output_format"":{""container"":""wav"",""encoding"":""pcm_s16le"",""sample_rate"":24000}}"
+            request.Open "POST", CARTESIA_URL, True
+        Else
+            requestBody = "{""text"":""" & JsonEscape(CStr(item("Text"))) & """," & _
+                """model_id"":""" & JsonEscape(mSpeechModel) & """}"
+            request.Open "POST", SPEECH_URL & voiceId & "?output_format=wav_24000", True
+        End If
         request.SetTimeouts 5000, 5000, 20000, 60000
         request.SetRequestHeader "Content-Type", "application/json"
-        request.SetRequestHeader "Accept", "application/octet-stream"
-        request.SetRequestHeader "xi-api-key", apiKey
-    End If
-    TraceBlock "Speech request: " & provider & ", model " & model & ", voice " & voiceId, requestBody
-    SendCancellable request, ToUtf8(requestBody)
-
-    statusCode = request.Status
-    TraceLine "Speech response: HTTP " & CStr(statusCode)
-    If statusCode < 200 Or statusCode >= 300 Then
-        responseText = request.ResponseText
-        TraceBlock "Speech error body", responseText
-        RememberHttp statusCode, responseText
-        Err.Raise ERR_HTTP, "SpeakCorrectedText", _
-            provider & " returned HTTP " & CStr(statusCode) & "." & vbCrLf & _
-            Left$(responseText, 1500)
-    End If
-
-    audio = request.ResponseBody
-    If Not IsArray(audio) Then
-        Err.Raise vbObjectError + 2101, "SpeakCorrectedText", _
-            provider & " returned no audio data."
-    End If
-    If UBound(audio) < LBound(audio) Then
-        Err.Raise vbObjectError + 2101, "SpeakCorrectedText", _
-            provider & " returned no audio data."
-    End If
-
-    TraceLine "Speech audio: " & CStr(UBound(audio) - LBound(audio) + 1) & " bytes"
-    If provider = "Cartesia" Then
-        audio = FixStreamingWavHeader(audio, patched)
-        If patched Then TraceLine "Speech audio: streaming WAV header sizes filled in"
-    End If
-
-    If cached Then
-        SaveAudioFile audio, cachePath
-        If PlaySound(StrPtr(cachePath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
-            Err.Raise vbObjectError + 2102, "SpeakCorrectedText", _
-                "Windows could not start audio playback."
+        If mSpeechProvider = "Cartesia" Then
+            request.SetRequestHeader "Authorization", "Bearer " & apiKey
+            request.SetRequestHeader "Cartesia-Version", CARTESIA_VERSION
+        Else
+            request.SetRequestHeader "Accept", "application/octet-stream"
+            request.SetRequestHeader "xi-api-key", apiKey
         End If
+        TraceBlock "Speech request: " & mSpeechProvider & ", model " & mSpeechModel & ", voice " & voiceId, requestBody
+        request.Send ToUtf8(requestBody)
+        mSpeechQueue.Remove 1
+        Set mSpeechRequest = request
+        TraceDetach
         Exit Sub
     End If
-
-    StopAndRemovePreviousAudio
-    mAudioPath = SaveAudioFile(audio)
-    TraceLine "Speech: playing " & mAudioPath
-    If PlaySound(StrPtr(mAudioPath), 0, SND_FILENAME Or SND_ASYNC Or SND_NODEFAULT) = 0 Then
-        Err.Raise vbObjectError + 2102, "SpeakCorrectedText", "Windows could not start audio playback."
-    End If
-
     Exit Sub
 
 Failed:
@@ -219,21 +392,24 @@ Failed:
     On Error Resume Next
     StopAndRemovePreviousAudio
     On Error GoTo 0
-    If errorNumber = ERR_CANCELLED Then Exit Sub         ' Esc pressed
-    If quiet Then Exit Sub
-    ReportApiFailure provider, model, errorNumber, errorDescription, 0, "Narration was skipped."
+    If Not itemRemoved Then mSpeechQueue.Remove 1
+    If mSpeechRequestQuiet Then
+        LogLine "  quiet narration failed: " & CStr(errorNumber) & " " & errorDescription
+    Else
+        ReportApiFailure mSpeechProvider, mSpeechModel, errorNumber, errorDescription, _
+            0, "Correction was applied; narration could not be played."
+    End If
+    TraceEnd
+    Set mSpeechTrace = Nothing
 
-End Sub
-
-Public Sub StopSpeech()
-    On Error Resume Next
-    StopAndRemovePreviousAudio
 End Sub
 
 Private Sub StopAndRemovePreviousAudio()
 
-    PlaySound 0, 0, 0
-    mCorrectionHumPlaying = False
+    If mPlaybackActive Then
+        MciCommand "close " & SPEECH_ALIAS
+        mPlaybackActive = False
+    End If
     If Len(mAudioPath) > 0 Then
         If Len(Dir$(mAudioPath)) > 0 Then Kill mAudioPath
         mAudioPath = ""
@@ -241,61 +417,103 @@ Private Sub StopAndRemovePreviousAudio()
 
 End Sub
 
-' Where the audio for a fixed phrase is kept. The voice, speech model and wording are in the name, so
-' changing any of them makes a new clip instead of playing a stale one.
+Private Sub StartSpeechPlayback(ByVal path As String)
+
+    StopCorrectionHum
+    MciCommand "open """ & path & """ type waveaudio alias " & SPEECH_ALIAS
+    mPlaybackActive = True
+    MciCommand "play " & SPEECH_ALIAS
+
+End Sub
+
+Private Sub StartCachedSpeechPlayback(ByVal path As String)
+
+    Dim playbackPath As String
+
+    playbackPath = TemporaryAudioPath()
+    CreateObject("Scripting.FileSystemObject").CopyFile path, playbackPath, False
+    mAudioPath = playbackPath
+    StartSpeechPlayback mAudioPath
+
+End Sub
+
+Private Function SpeechPlaybackStopped() As Boolean
+
+    Dim result As String
+
+    result = Space$(128)
+    MciCommand "status " & SPEECH_ALIAS & " mode", result
+    result = Left$(result, InStr(result, vbNullChar) - 1)
+    Select Case LCase$(result)
+        Case "stopped": SpeechPlaybackStopped = True
+        Case "playing": SpeechPlaybackStopped = False
+        Case Else
+            Err.Raise vbObjectError + 2102, "SpeechPlaybackStopped", _
+                "Unexpected audio playback status: " & result
+    End Select
+
+End Function
+
+Private Sub MciCommand(ByVal command As String, Optional ByRef result As String = "")
+
+    Dim errorCode As Long
+    Dim errorText As String
+
+    errorCode = mciSendString(StrPtr(command), StrPtr(result), Len(result), 0)
+    If errorCode <> 0 Then
+        errorText = Space$(256)
+        If mciGetErrorString(errorCode, StrPtr(errorText), Len(errorText)) <> 0 Then
+            errorText = Left$(errorText, InStr(errorText, vbNullChar) - 1)
+        Else
+            errorText = "Unknown MCI error."
+        End If
+        Err.Raise vbObjectError + 2102, "MciCommand", _
+            "Audio playback failed (" & CStr(errorCode) & "): " & errorText
+    End If
+
+End Sub
+
 Private Function NoticeCachePath(ByVal provider As String, ByVal model As String, _
     ByVal voiceId As String, ByVal text As String) As String
 
+    Dim fileSystem As Object
     Dim folder As String
+    Dim fileName As String
+    Dim identity As String
     Dim i As Long
     Dim c As String
-    Dim slug As String
 
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
     folder = Environ$("APPDATA") & "\LLMAutocorrect\cache"
-    On Error Resume Next
-    MkDir folder
-    On Error GoTo 0
+    If Not fileSystem.FolderExists(folder) Then fileSystem.CreateFolder folder
 
-    For i = 1 To Len(text)
-        c = Mid$(text, i, 1)
-        If c Like "[A-Za-z0-9]" Then slug = slug & c Else slug = slug & "_"
+    identity = provider & "_" & model & "_" & voiceId & "_" & text
+    For i = 1 To Len(identity)
+        c = Mid$(identity, i, 1)
+        If c Like "[A-Za-z0-9._-]" Then fileName = fileName & c Else fileName = fileName & "_"
     Next i
-
-    ' ElevenLabs keeps its original file name so existing cached clips stay valid.
-    If provider = "Cartesia" Then
-        NoticeCachePath = folder & "\cartesia_" & voiceId & "_" & model & "_" & slug & ".wav"
-    Else
-        NoticeCachePath = folder & "\" & voiceId & "_" & model & "_" & slug & ".wav"
-    End If
+    NoticeCachePath = folder & "\" & fileName & ".wav"
 
 End Function
 
-' The speech model for the provider. Cartesia's can be overridden with CARTESIA_MODEL in config.ini.
 Private Function ActiveSpeechModel(ByVal provider As String) As String
-
     If provider = "Cartesia" Then
         ActiveSpeechModel = ConfigValue("CARTESIA_MODEL", CARTESIA_MODEL)
-        If Len(ActiveSpeechModel) = 0 Then ActiveSpeechModel = CARTESIA_MODEL
     Else
         ActiveSpeechModel = SPEECH_MODEL
     End If
-
 End Function
 
-' Saves the audio to path, or to a new temp file when path is empty. Returns the path used.
-Private Function SaveAudioFile(ByVal audio As Variant, Optional ByVal path As String = "") As String
+Private Function SaveAudioFile(ByVal audio As Variant, _
+    Optional ByVal filePath As String = "") As String
 
-    Dim fileName As String
     Dim stream As Object
-    Dim fileSystem As Object
 
-    If Len(path) = 0 Then
-        Set fileSystem = CreateObject("Scripting.FileSystemObject")
-        fileName = fileSystem.GetTempName
-        fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
-        path = Environ$("TEMP") & "\" & fileName
+    If Len(filePath) > 0 Then
+        SaveAudioFile = filePath
+    Else
+        SaveAudioFile = TemporaryAudioPath()
     End If
-    SaveAudioFile = path
 
     Set stream = CreateObject("ADODB.Stream")
     stream.Type = 1
@@ -306,16 +524,23 @@ Private Function SaveAudioFile(ByVal audio As Variant, Optional ByVal path As St
 
 End Function
 
-' Cartesia streams its WAV, so the RIFF size and the data chunk size are both &HFFFFFFFF ("unknown").
-' PlaySound will not play that. Fill in the real sizes from the number of bytes received. Audio that
-' is not a WAV, or already has real sizes, is returned unchanged.
+Private Function TemporaryAudioPath() As String
+
+    Dim fileName As String
+
+    fileName = CreateObject("Scripting.FileSystemObject").GetTempName
+    fileName = Left$(fileName, InStrRev(fileName, ".") - 1) & ".wav"
+    TemporaryAudioPath = Environ$("TEMP") & "\" & fileName
+
+End Function
+
+' Cartesia streams WAV with unknown RIFF and data sizes; fill them before MCI opens it.
 Private Function FixStreamingWavHeader(ByVal audio As Variant, ByRef patched As Boolean) As Variant
 
     Dim b() As Byte
     Dim n As Long
     Dim pos As Long
     Dim chunkSize As Double
-    Dim i As Long
 
     FixStreamingWavHeader = audio
     b = audio
@@ -326,7 +551,6 @@ Private Function FixStreamingWavHeader(ByVal audio As Variant, ByRef patched As 
 
     PutSize32 b, 4, n - 8
     patched = True
-
     pos = 12
     Do While pos + 8 <= n
         chunkSize = b(pos + 4) + b(pos + 5) * 256# + b(pos + 6) * 65536# + b(pos + 7) * 16777216#
@@ -334,10 +558,10 @@ Private Function FixStreamingWavHeader(ByVal audio As Variant, ByRef patched As 
             PutSize32 b, pos + 4, n - (pos + 8)
             Exit Do
         End If
+        If chunkSize > n - pos - 8 Then Exit Do
         pos = pos + 8 + CLng(chunkSize)
-        If chunkSize - 2# * Int(chunkSize / 2#) <> 0 Then pos = pos + 1      ' chunks are padded to even length
+        If chunkSize - 2# * Int(chunkSize / 2#) <> 0 Then pos = pos + 1
     Loop
-
     FixStreamingWavHeader = b
 
 End Function

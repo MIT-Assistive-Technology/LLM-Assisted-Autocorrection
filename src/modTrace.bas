@@ -21,11 +21,7 @@ Private Const MAX_PASS_CHARS As Long = 200000       ' one trace stops growing he
 Private Const MAX_BLOCK_CHARS As Long = 20000       ' one request/response body is cut here
 Private Const MAX_FILE_BYTES As Long = 5000000      ' a trace file stops taking more here
 
-Private mPassOpen As Boolean
-Private mPass As String
-Private mPassStart As Double
-Private mPassDocName As String
-Private mPassDocPath As String
+Private mPass As Object
 
 Private mLast As String             ' the finished trace of the previous line
 Private mLastDocName As String
@@ -50,30 +46,40 @@ End Function
 ' Recording one pass (one press of Enter that does work)
 ' ---------------------------------------------------------------------------------------------
 
-Public Sub TraceBegin(ByVal paragraphText As String, ByVal mode As Long)
+Public Function TraceBegin(ByVal paragraphText As String, ByVal mode As Long, ByVal doc As Document) As Object
 
-    mPassOpen = False
-    If Not TraceEnabled() Then Exit Sub
+    Set mPass = Nothing
+    If Not TraceEnabled() Then Exit Function
 
-    On Error Resume Next
-    mPassDocName = ActiveDocument.Name
-    mPassDocPath = ActiveDocument.FullName
-    On Error GoTo 0
-
-    mPassOpen = True
-    mPassStart = NowMs()
-    mPass = "=== Trace " & Format$(Now, "yyyy-mm-dd hh:nn:ss") & " ===" & vbCrLf & _
-        "Document: " & mPassDocPath & vbCrLf & _
-        "Mode: " & ModeLabel(mode) & vbCrLf
+    Set mPass = CreateObject("Scripting.Dictionary")
+    mPass.Add "Start", NowMs()
+    mPass.Add "DocName", doc.Name
+    mPass.Add "DocPath", doc.FullName
+    mPass.Add "Save", mContinuous
+    mPass.Add "Text", "=== Trace " & Format$(Now, "yyyy-mm-dd hh:nn:ss") & " ===" & vbCrLf & _
+        "Document: " & doc.FullName & vbCrLf & "Mode: " & ModeLabel(mode) & vbCrLf
     TraceBlock "Paragraph (input)", paragraphText
+    Set TraceBegin = mPass
 
+End Function
+
+Public Sub TraceActivate(ByVal trace As Object)
+    Set mPass = trace
+End Sub
+
+Public Function TraceCurrent() As Object
+    Set TraceCurrent = mPass
+End Function
+
+Public Sub TraceDetach()
+    Set mPass = Nothing
 End Sub
 
 ' One line, stamped with the milliseconds since the pass began.
 Public Sub TraceLine(ByVal text As String)
 
-    If Not mPassOpen Then Exit Sub
-    AddToPass "+" & CStr(SinceMs(mPassStart)) & "ms  " & text & vbCrLf
+    If mPass Is Nothing Then Exit Sub
+    AddToPass "+" & CStr(SinceMs(CDbl(mPass("Start")))) & "ms  " & text & vbCrLf
 
 End Sub
 
@@ -82,13 +88,13 @@ Public Sub TraceBlock(ByVal title As String, ByVal body As String)
 
     Dim shown As String
 
-    If Not mPassOpen Then Exit Sub
+    If mPass Is Nothing Then Exit Sub
     body = CollapseSignatures(body)
     shown = body
     If Len(shown) > MAX_BLOCK_CHARS Then
         shown = Left$(shown, MAX_BLOCK_CHARS) & vbCrLf & "[cut: " & CStr(Len(body) - MAX_BLOCK_CHARS) & " more characters]"
     End If
-    AddToPass "+" & CStr(SinceMs(mPassStart)) & "ms  [" & title & "] (" & CStr(Len(body)) & " chars)" & _
+    AddToPass "+" & CStr(SinceMs(CDbl(mPass("Start")))) & "ms  [" & title & "] (" & CStr(Len(body)) & " chars)" & _
         vbCrLf & shown & vbCrLf
 
 End Sub
@@ -120,24 +126,21 @@ End Function
 
 Public Sub TraceEnd()
 
-    If Not mPassOpen Then Exit Sub
-    mPassOpen = False
-
-    mLast = mPass & vbCrLf
-    mLastDocName = mPassDocName
-    mLastDocPath = mPassDocPath
+    If mPass Is Nothing Then Exit Sub
+    mLast = CStr(mPass("Text")) & vbCrLf
+    mLastDocName = CStr(mPass("DocName"))
+    mLastDocPath = CStr(mPass("DocPath"))
     mLastSaved = False
-    mPass = ""
-
-    If mContinuous Then mLastSaved = WriteTrace(mLast, mLastDocName, mLastDocPath)
+    If CBool(mPass("Save")) Then mLastSaved = WriteTrace(mLast, mLastDocName, mLastDocPath)
+    Set mPass = Nothing
 
 End Sub
 
 Private Sub AddToPass(ByVal s As String)
 
-    If Len(mPass) > MAX_PASS_CHARS Then Exit Sub
-    mPass = mPass & s
-    If Len(mPass) > MAX_PASS_CHARS Then mPass = mPass & vbCrLf & "[trace cut: too long]" & vbCrLf
+    If Len(CStr(mPass("Text"))) > MAX_PASS_CHARS Then Exit Sub
+    mPass("Text") = CStr(mPass("Text")) & s
+    If Len(CStr(mPass("Text"))) > MAX_PASS_CHARS Then mPass("Text") = CStr(mPass("Text")) & vbCrLf & "[trace cut: too long]" & vbCrLf
 
 End Sub
 

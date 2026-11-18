@@ -68,14 +68,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --- Files ------------------------------------------------------------------
-$template = Join-Path $here 'LLMAutocorrect.dotm'
-if (-not (Test-Path $template)) {
-    $sourceTemplate = Join-Path $here '..\..\dist\LLMAutocorrect.dotm'
-    if (Test-Path $sourceTemplate) {
-        $template = $sourceTemplate
-    } else {
-        throw 'LLMAutocorrect.dotm was not found. Build it with scripts\Build-Template.ps1 or run Install.cmd from the extracted release zip.'
-    }
+$sourceTemplate = Join-Path $here '..\..\dist\LLMAutocorrect.dotm'
+$packagedTemplate = Join-Path $here 'LLMAutocorrect.dotm'
+if (Test-Path $sourceTemplate) {
+    $template = $sourceTemplate
+} elseif (Test-Path $packagedTemplate) {
+    $template = $packagedTemplate
+} else {
+    throw 'LLMAutocorrect.dotm was not found. Build it with scripts\Build-Template.ps1 or run Install.cmd from the extracted release zip.'
 }
 Copy-Item $template (Join-Path $startup 'LLMAutocorrect.dotm') -Force
 Unblock-File (Join-Path $startup 'LLMAutocorrect.dotm')
