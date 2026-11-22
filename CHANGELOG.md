@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+- New: support for parallel typing when autocorrection or narration of previous paragraph is active.
+- Fixed: narration audio from being abruptly cut off
+- Fixed: ping sonification on Enter key press plays during narration.
+
 ## 0.2.1
 - Fixed: the same words typed on a new line are now corrected (and narrated) like any other line. Skipping an unchanged line on Enter now depends on where the line is in the document as well as its text, so it only applies to pressing Enter again on a line you have not changed.
 - New: trace logging. Type `!!!` on a line of its own and press Enter to save the full trace of the previous line (the paragraph, the model request and reply, the checks, the speech call). Type `@@@` to save every line's trace until you type `@@@` again; this is spoken ("Trace on" / "Trace off") and shown in the status bar, and it is off again when Word restarts. The marker lines stay in the document. Traces are added to `%APPDATA%\LLMAutocorrect	races\<document name>.trace.log` (one file per document, never deleted automatically) and contain your document text but never an API key; the new "LLM Autocorrect Traces" desktop shortcut opens that folder. `!!!` is spoken as "Logged trace." Gemini's encrypted `thought_signature` value is shortened to a length note in traces. `TRACE_COMMANDS=off` in config.ini turns the commands and the recording off (default on).
