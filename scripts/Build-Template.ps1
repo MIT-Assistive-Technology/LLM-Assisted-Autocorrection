@@ -55,13 +55,12 @@ try {
     }
 
     # Bind the keys inside the template itself, so the bindings travel with the .dotm and are
-    # active whenever the template is loaded from Word's STARTUP folder. Note that Shift + ` did not dispatch in testing.
+    # active whenever the template is loaded from Word's STARTUP folder.
     $wdKeyCategoryMacro = 2
-    # Enter runs the correction; the ` key (192 = wdKeyBackSingleQuote) cycles Correction / Correction + Narration / Off, and Esc stops speech.
     $bindings = @(
         @{ Key = 13;  Modifier = 0; Macro = 'modCorrectParagraph.EnterAndCorrectParagraph'; Name = 'Enter' },
         @{ Key = 192; Modifier = 0; Macro = 'modMode.CycleMode'; Name = 'backtick' },
-        @{ Key = 27;  Modifier = 0; Macro = 'modSpeech.StopSpeech'; Name = 'Esc' }
+        @{ Key = 27;  Modifier = 0; Macro = 'modCorrectParagraph.CancelPendingWork'; Name = 'Esc' }
     )
     $word.CustomizationContext = $doc
     foreach ($b in $bindings) {
